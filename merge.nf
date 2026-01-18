@@ -32,6 +32,8 @@ if ( vcf_files.isEmpty() )
 if ( cov_files.isEmpty() )
     error "No merged.per_base_coverage.tsv(.gz) files found under ${params.merged_dir}"
 
+ch_summary_entries = Channel.fromPath("${params.outdir}/*/*.individual_entry.txt").collect()
+
 // Materialize channels
 ch_vcfs     = Channel.value(vcf_files)
 ch_cov_tsvs = Channel.value(cov_files)
@@ -133,6 +135,8 @@ process REFINE_ANNOTATION {
   label 'vep_related'
   publishDir "${params.outdir}/merged_results", mode: 'copy'
 
+  errorStrategy 'ignore'
+
   input:
   path combined_vcf
   path hail_dir
@@ -169,6 +173,54 @@ JSON
   """
 }
 
+process COMBINE_SUMMARY_LOGS {
+    publishDir "${params.outdir}", mode: 'copy'
+
+    input:
+    path entry_files
+    val status
+
+    output:
+    path "pipeline_summary_log.txt"
+
+    script:
+    def header = """# ====================================================
+# PIPELINE RUN SUMMARY
+# Start Time:   ${workflow.start}
+# Params:       
+# min_mt_cov:${params.min_mt_cov}
+# min_mtcn:${params.min_mtcn}
+# max_mtcn:${params.max_mtcn}
+# max_contam:${params.max_contam}
+# vaf_filter_threshold:${params.vaf_filter_threshold}
+# ====================================================
+Sample_ID\tStatus\tPass_Filter\tmt_Cov\tmtCN\tContamination\tNote
+""".stripIndent()
+
+    """
+    # 1. Create the log file with header
+    echo "${header}" > pipeline_summary_log.txt
+    
+    # 2. Combine all individual entry files if they exist
+    if [ -n "${entry_files}" ]; then
+        cat ${entry_files} | sort >> pipeline_summary_log.txt
+    fi
+
+    # 3. Final check and cleanup
+    if [ "${status}" == "FAILED" ]; then
+        echo -e "\n[ERROR] THE MERGE/ANNOTATION STAGE FAILED. PLEASE CHECK SLURM LOGS." >> pipeline_summary_log.txt
+        echo "Error: Stage 2 refinement failed." >&2
+        exit 1
+    else
+        echo -e "\n[INFO] Merging stage completed successfully." >> pipeline_summary_log.txt
+        
+        # --- NEW CLEANUP LOGIC ---
+        # Delete individual entry files only after successful merging
+        echo "[INFO] Cleaning up individual sample files..."
+        rm -f ${entry_files}
+    fi
+    """
+}
 
 // ======================================================================
 // WORKFLOW
@@ -177,6 +229,12 @@ workflow FINALIZER {
   ANNOTATE_COVERAGE(ch_cov_tsvs, ch_hail_dir)
   COMBINE_VCFS(ch_vcfs, ANNOTATE_COVERAGE.out.coverage_mt, ch_hail_dir)
   REFINE_ANNOTATION(COMBINE_VCFS.out.combined_vcf, ch_hail_dir)
+
+  ch_combine_status = REFINE_ANNOTATION.out.refined_results
+        .map { "SUCCESS" }
+        .ifEmpty("FAILED")
+
+  COMBINE_SUMMARY_LOGS(ch_summary_entries, ch_combine_status)
 }
 
 workflow { FINALIZER() }

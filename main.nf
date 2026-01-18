@@ -4,14 +4,19 @@ nextflow.enable.dsl=2
 import groovy.json.JsonBuilder
 
 // ======================================================================
-// HEADER
+// CONFIGURATION & INITIALIZATION
 // ======================================================================
+
+// Print pipeline header with Work Directory to console at launch
 log.info """
 PIPELINE START
-=================================
+======================================================================
 Input file:        ${params.input}
 Output directory:  ${params.outdir}
-=================================
+Work directory:    ${workflow.workDir}
+Summary log:       ${params.summary_log}
+Launch directory:  ${workflow.launchDir}
+======================================================================
 """
 
 // ======================================================================
@@ -99,7 +104,7 @@ process ALIGN_AND_UNSORT {
   """
   #!/usr/bin/env bash
   set -euo pipefail
-  bwa mem -t ${task.cpus} -R ${rg} ${ref_fasta} ${read1} ${read2} \\
+  bwa mem -K 100000000 -v 3 -Y -t ${task.cpus} -R ${rg} ${ref_fasta} ${read1} ${read2} \\
     | samtools view -@ ${task.cpus} -b -o ${meta.id}_${meta.pair_id}.unsorted.bam -
   rm -f ${read1} ${read2}
   """
@@ -306,7 +311,7 @@ EOF
     "*.haplocheck_contamination.txt"
     "*.realigned.bam" "*.realigned.bai" "*.realigned.bwa.stderr.log"
     "*.metrics" "metrics.txt" "theoretical_sensitivity.txt"
-    "*.bai" "*.cram" "*.crai"
+    "*.bai"
   )
 
   for pat in "\${patterns[@]}"; do
@@ -408,63 +413,56 @@ process SAMPLE_LEVEL_FILTER {
   tag "Sample filter ${meta.id}"
   label 'mtCN_related'
 
+  publishDir "${params.outdir}/${meta.id}", mode: 'copy'
+
   input:
   tuple val(meta), path(mtcn_summary)
 
   output:
   tuple val(meta), path(".pass.ok"), optional: true, emit: pass_signal
+  path "${meta.id}.individual_entry.txt", emit: log_entry
 
   script:
   """
   #!/usr/bin/env bash
   set -euo pipefail
 
-  if [[ ! -s "${mtcn_summary}" ]]; then
-    echo "[ERROR] mtCN summary file not found for ${meta.id}" >&2
-    exit 1
-  fi
+  # 使用原生 Python 提高兼容性，提取数值和 Pass 状态
+  results=\$(python - "${mtcn_summary}" <<'PY'
+import sys, re
 
-  tmp="\$(mktemp)"
-  tr -d '\\r' < "${mtcn_summary}" > "\$tmp"
-
-  # Robust parser: case-insensitive, tolerant to tab/space, accepts true/pass/1/yes/y
-  pass_flag=\$(python - "\$tmp" <<'PY'
-import sys, re, io
-p = sys.argv[1]
-with io.open(p, 'r', encoding='utf-8', errors='ignore') as f:
-    lines = [ln.strip() for ln in f if ln.strip()]
-if not lines:
-    print("FAIL"); sys.exit(0)
-
-split = re.compile(r'\\s+|\\t')
-header = split.split(lines[0])
-col = -1
-for i, name in enumerate(header):
-    if re.fullmatch(r'(?i)pass(?:_|\\s)?filter', name) or name.lower() in ('pass_filter','pass'):
-        col = i; break
-
-if col < 0 and len(header)==1:
-    val = lines[1].strip().lower() if len(lines)>1 else ''
-    print("PASS" if val in {"true","pass","1","yes","y"} else "FAIL")
-    sys.exit(0)
-
-if col < 0 or len(lines)<2:
-    print("FAIL"); sys.exit(0)
-
-val = split.split(lines[1])[col].strip().lower()
-print("PASS" if val in {"true","pass","1","yes","y"} else "FAIL")
+try:
+    with open(sys.argv[1], 'r') as f:
+        lines = [line.strip() for line in f if line.strip()]
+        header = lines[0].split('\t')
+        data = lines[1].split('\t')
+        
+        # 将列名存入字典方便查找
+        res_dict = dict(zip(header, data))
+        
+        # 匹配 calculate_mtcn.py 的原始列名
+        mt_cov = res_dict.get('Mean_mtDNA_Coverage', 'N/A')
+        mtcn = res_dict.get('mtCN_final', 'N/A')
+        contam = res_dict.get('Contamination', 'N/A')
+        # 兼容 True/TRUE/pass 等写法
+        pass_val = "TRUE" if res_dict.get('Pass_Filter', 'False').lower() in ['true', 'pass', '1'] else "FALSE"
+        
+        print(f"{pass_val}|{mt_cov}|{mtcn}|{contam}")
+except Exception as e:
+    sys.stderr.write(str(e))
+    print("ERROR|N/A|N/A|N/A")
 PY
 )
 
-  if [[ "\${pass_flag}" == "PASS" ]]; then
-    echo "[INFO] ${meta.id} passes mtCN/contamination thresholds"
+  # 解析 Python 输出
+  IFS='|' read -r PASS_FLAG COV MTCN CONTAM <<< "\${results}"
+
+  # 写入临时日志条目 (修正2：确保文件名与 output 部分定义的一致)
+  if [[ "\${PASS_FLAG}" == "TRUE" ]]; then
+    echo -e "${meta.id}\tSUCCESS\t\${PASS_FLAG}\t\${COV}\t\${MTCN}\t\${CONTAM}\tQC Done" > "${meta.id}.individual_entry.txt"
     touch .pass.ok
-    rm -f "\$tmp" 2>/dev/null || true
   else
-    echo "[FILTERED] ${meta.id} did not pass QC (mtCN_summary.txt):" >&2
-    cat "\$tmp" >&2
-    # Soft filter: exit 0 without emitting .pass.ok, so downstream is skipped
-    exit 0
+    echo -e "${meta.id}\tSUCCESS\tFALSE\t\${COV}\t\${MTCN}\t\${CONTAM}\tQC Failed" > "${meta.id}.individual_entry.txt"
   fi
   """
 }
@@ -631,7 +629,7 @@ workflow {
 
   // Gate annotation by PASSed samples
   SAMPLE_LEVEL_FILTER(CALCULATE_MTCN.out.mtcn_summary)
-
+  
   ch_pass_keyed = SAMPLE_LEVEL_FILTER.out.pass_signal.map { meta, _ -> tuple(meta.id as String, [meta]) }
   ch_wdl_keyed2 = RUN_WDL_VARIANT_CALLING.out.wdl_files.map { meta, vcf, contam, coverage ->
                     tuple(meta.id as String, [meta, file(vcf), file(contam), file(coverage)]) }
@@ -651,12 +649,12 @@ workflow {
 // WORKFLOW HOOKS
 // ======================================================================
 workflow.onComplete {
-  if( workflow.success ) {
-    log.info """Pipeline completed successfully.
-Output files are in: ${params.outdir}"""
-  } else {
-    // Intentionally silent on failure (avoid printing a success banner).
-  }
+    if( workflow.success ) {
+        log.info """
+        Pipeline completed successfully. 
+        Output files : ${params.outdir}
+        """.stripIndent()
+    }
 }
 
 workflow.onError { e ->
