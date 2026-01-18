@@ -12,7 +12,7 @@ git clone https://github.com/LiTang1013/human_mito_calling.git
 cd human_mito_calling
 ``` 
 2. Make sure you have all prerequisites installed (see [Prerequisites](#prerequisites)).
-3. Prepare your sample list TSV file (e.g., `test_sample.tsv`), following the specified format (see [Input Files](#input-files)). If you want to use the "disease" mode, prepare the disease metadata file (e.g. `disease_meta.tsv`) as well.
+3. Prepare your sample list TSV file (e.g., `test_sample.tsv`), following the specified format (see [Input Files](#input-files)). If you want to use the "disease" mode, prepare the disease pedigree file (e.g. `disease_pedigree.tsv`) as well.
 4. Prepare required files for the pipeline (see [Required Files](#required-files)).
 5. Review and update paths in `nextflow.config` to match your environment. As well as change sample-level/variant filtering parameters if needed (see [Configuration](#configuration)).
 6. Review and update paths in `launch_pipeline.sh` and set launch parameters (see [Launch](#launch)).
@@ -47,7 +47,7 @@ Before running the pipeline, ensure you have the following installed and configu
 
 
 ## Input Files
-The pipeline requires a sample list TSV file (e.g., test_sample.tsv) and a disease metadata file (e.g. `disease_meta.tsv`), which is only needed if you want to use the "disease" mode. The sample list file could contain multiple samples with FASTQ/BAM/CRAM paths or URLs. Each sample can have multiple sequencing runs, the pipeline will merge them as one in the processing steps (if you don't want to merge them, you can specify them with different sample IDs).
+The pipeline requires a sample list TSV file (e.g., test_sample.tsv) and a disease pedigree file (e.g. `disease_pedigree.tsv`), which is only needed if you want to use the "disease" mode. The sample list file could contain multiple samples with FASTQ/BAM/CRAM paths or URLs. Each sample can have multiple sequencing runs, the pipeline will merge them as one in the processing steps (if you don't want to merge them, you can specify them with different sample IDs).
 
 ### Sample list TSV file
 A tab-separated file with three columns.
@@ -73,14 +73,14 @@ Sample1	/path/to/data/Sample1.cram   /path/to/data/Sample1.crai
 Sample2	/path/to/data/Sample2.cram   /path/to/data/Sample2.crai
 ``` 
 
-### Disease metadata file format
-Only needed for "disease" mode. A tab-separated file with at least the following columns.
+### Disease pedigree file format
+Only needed for "disease" mode. See [PED file](https://gatk.broadinstitute.org/hc/en-us/articles/360035531972-PED-Pedigree-format) for more information. A tab-separated file with at least the following columns.
 ```
-SampleID	FamilyID	Category	OtherInfo
-Sample1	Family1	proband	SomeInfo1
-Sample2	Family1	control	SomeInfo2
+FamilyID	IndividualID/SampleID	PaternalID	MaternalID	Sex	Phenotype
+FAM001	Sample1	0	0	1	2
+FAM001	Sample2	0	0	1	2
 ```
- Must contain at least the following columns: `SampleID`, `FamilyID`, `Category` (proband/control), and any other metadata columns you wish to include.
+ Must contain at least the following columns: `FamilyID`, `IndividualID/SampleID`, `PaternalID`, `MaternalID`, `Sex`, `Phenotype`, and any other metadata columns you wish to include.
 
 ## Required Files
 - Whole genome reference and indices
@@ -95,7 +95,7 @@ This includes the standard mitochondrial reference FASTA and a shifted version (
 
 Additional files such as the shift back chain file and blacklisted sites BED files are also required for accurate variant calling and filtering.
 
-`autosome_XY.interval_list` is used to calculate the autosomal coverage for mtCN estimation.
+`wgs_coverage_regions.hg38.interval_list` is used to calculate the autosomal coverage for mtCN estimation.
 
 Here we provide an example set of reference and other required files needed for the pipeline (hg38/GRCh38) in the `required_files` directory:
 ```
@@ -178,7 +178,7 @@ Before launching, review and update the following variables in `launch_pipeline.
 | WORK_DIR_BASE | Base working directory for all jobs. | `/path/to/workdir` |
 | CONCURRENT_SAMPLES | Number of concurrent samples to process in the Slurm Job Array. | `3` |
 | PIPELINE_MODE | Pipeline analysis mode: "population" or "disease". | `population` |
-| DISEASE_META_FILE | Disease metadata TSV file (only needed for "disease" mode). | `/path/to/disease_meta.tsv` |
+| DISEASE_PED_FILE | Disease pedigree TSV file (only needed for "disease" mode). | `/path/to/disease_pedigree.tsv` |
 | Module | Load required module (Or make sure your Nextflow environments is set up) | `module load Nextflow/24.10.2` |
 
 </div>
@@ -198,7 +198,7 @@ You can monitor the progress of the pipeline by checking the Slurm job status us
 [*] Created/Updated stable input file: /path/to/workdir/batch_0/sample_xxx.tsv
 [*] Input file contents:
 SampleID	R1_Path	R2_Path
-[*] Running in 'disease' mode. Checking for Disease meta file.
+[*] Running in 'disease' mode. Checking for Disease pedigree file.
 [*] Starting Nextflow...
 
 PIPELINE START
