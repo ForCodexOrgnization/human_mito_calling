@@ -174,6 +174,7 @@ JSON
 }
 
 process COMBINE_SUMMARY_LOGS {
+    label 'hail_related'
     publishDir "${params.outdir}", mode: 'copy'
 
     input:
