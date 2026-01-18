@@ -38,7 +38,7 @@ def process_and_filter_variants(args) -> None:
 
     # Optional: disease meta (SampleID/Category with flexible casing)
     category_dict = {}
-    if os.path.isfile(args.disease_meta_file):
+    if args.disease_meta_file and os.path.isfile(args.disease_meta_file):
         meta = pd.read_csv(args.disease_meta_file, sep="\t", dtype=str)
         meta.columns = [c.strip().lower() for c in meta.columns]
         if {"sampleid", "category"}.issubset(meta.columns):
@@ -165,7 +165,18 @@ def process_and_filter_variants(args) -> None:
     vcf["Heteroplasmy"] = pd.to_numeric(vcf["AF"], errors="coerce")
     vcf["DP"] = pd.to_numeric(vcf["DP"], errors="coerce")
 
-    # VEP INFO parsing (safe slice)
+    # ---- FIXED VEP INFO parsing ----
+    # VCF INFO fields often contain tags like DP=X;AF=Y;CSQ=Allele|Consequence...
+    # Direct splitting of the whole INFO column causes index shifting.
+    # We must isolate the CSQ (VEP) string first.
+    def extract_csq(info_str):
+        for segment in info_str.split(";"):
+            if segment.startswith("CSQ="):
+                return segment[4:] # Remove 'CSQ=' prefix
+        return ""
+
+    vcf["CSQ_STRING"] = vcf["INFO"].apply(extract_csq)
+    
     info_cols = [
         "Allele", "Consequence", "IMPACT", "SYMBOL", "Gene", "Feature_type",
         "Feature", "BIOTYPE", "EXON", "INTRON", "HGVSc", "HGVSp",
@@ -173,11 +184,19 @@ def process_and_filter_variants(args) -> None:
         "Codons", "Existing_variation", "DISTANCE", "STRAND", "FLAGS",
         "VARIANT_CLASS", "SYMBOL_SOURCE", "HGNC_ID", "HGVS_OFFSET",
     ]
-    info = vcf["INFO"].str.split("|", expand=True)
-    vep_start = 1
-    take = min(len(info_cols), max(0, info.shape[1] - vep_start))
+    
+    # Split the isolated CSQ string by the pipe character
+    vep_split = vcf["CSQ_STRING"].str.split("|", expand=True)
+    
+    # After stripping 'CSQ=', index 0 is Allele, 1 is Consequence, 2 is IMPACT
+    vep_start = 0 
+    take = min(len(info_cols), max(0, vep_split.shape[1] - vep_start))
+    
     if take > 0:
-        vcf[info_cols[:take]] = info.iloc[:, vep_start: vep_start + take]
+        vcf[info_cols[:take]] = vep_split.iloc[:, vep_start: vep_start + take]
+
+    # Clean up temporary parsing column
+    vcf.drop(columns=["CSQ_STRING"], inplace=True)
 
     # Metadata columns
     vcf["SAMPLE_ID"] = sample_col
@@ -272,7 +291,7 @@ def process_and_filter_variants(args) -> None:
     vcf[final_cols].to_csv(pre_path, sep="\t", index=False, na_rep="")
     print(f"[+] Prefiltering table saved to: {pre_path}")
 
-    # Final filtered table (AF→Heteroplasmy; keep your criteria; exclude haplo_var_match)
+    # Final filtered table
     filtered = vcf[
         (vcf["gnomad_af_hom"] < 0.01) &
         (vcf["helix_af_hom"]  < 0.01) &
@@ -305,7 +324,7 @@ if __name__ == "__main__":
     ap.add_argument("--final-output-dir", required=True)
     ap.add_argument("--fullhaplogroups", required=True)
     ap.add_argument("--contamination", required=True)
-    ap.add_argument("--disease-meta-file", required=True)
+    ap.add_argument("--disease-meta-file", required=False, default=None)
     ap.add_argument("--gnomadcache", required=True)
     ap.add_argument("--clinvarcache", required=True)
     ap.add_argument("--mitomap-polycache", required=True)

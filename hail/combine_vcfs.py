@@ -21,6 +21,7 @@ META_DICT = {
     },
     "format": {
         "DP": {"Description": "Depth of coverage", "Number": "1", "Type": "Integer"},
+        "AD": {"Description": "Allelic depths for the ref and alt alleles in the order listed", "Number": "R", "Type": "Integer"},
         "FT": {"Description": "Sample-level filters", "Number": ".", "Type": "String"},
         "HL": {"Description": "Heteroplasmy level", "Number": "1", "Type": "Float"},
         "MQ": {"Description": "Mapping quality", "Number": "1", "Type": "Float"},
@@ -174,13 +175,11 @@ def join_mitochondria_vcfs_into_mt(
             mt = hl.import_vcf(vcf_path, reference_genome="GRCh38")
             # because the vcfs are split, there is only one AF value, although misinterpreted as an array because Number=A in vcf header
             # second value of MMQ is the value for the alternate allele
-            mt = mt.select_entries("DP", HL=mt.AF[0])
-            mt = mt.annotate_entries(
-                MQ=hl.float(mt.info["MMQ"][1]), TLOD=mt.info["TLOD"][0], FT=hl.if_else(hl.len(mt.filters) == 0, {"PASS"}, mt.filters)
-            )
-            # use GRCh37 as reference as this is more compatibile with mitochondria resources that may be added as annotations in downstream scripts
+            mt = mt.select_entries("DP", "AD", HL=mt.AF[0]) # Add AD to entries
+            mt = mt.annotate_entries(MQ=hl.float(mt.info["MMQ"][1]), TLOD=mt.info["TLOD"][0], FT=hl.if_else(hl.len(mt.filters) == 0, {"PASS"}, mt.filters))
+            # use GRCh38 as reference as this is more compatibile with mitochondria resources that may be added as annotations in downstream scripts
             mt = mt.key_rows_by(
-                locus=hl.locus("MT", mt.locus.position, reference_genome="GRCh37"),
+                locus=hl.locus("chrM", mt.locus.position, reference_genome="GRCh38"),
                 alleles=mt.alleles,
             )
             mt = mt.key_cols_by(s=sample)
@@ -227,11 +226,11 @@ def determine_hom_refs(
     :rtype: hl.MatrixTable
     """
 
-    # convert coverage to build GRCh37
-    # note: the mitochondrial reference genome is the same for GRCh38 and GRCh37
+    # convert coverage to build GRCh38
+    # note: the mitochondrial reference genome is the same for GRCh38 and GRCh38
     coverages = hl.read_matrix_table(coverage_mt_path)
     coverages = coverages.key_rows_by(
-        locus=hl.locus("MT", coverages.locus.position, reference_genome="GRCh37")
+        locus=hl.locus("chrM", coverages.locus.position, reference_genome="GRCh38")
     )
 
     mt = mt.annotate_entries(

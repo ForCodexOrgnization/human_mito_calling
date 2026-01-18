@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from logging import config
 import os
 import sys
 import json
@@ -146,23 +147,34 @@ def step3_run_variant_processor(config):
     """
     print("\n--- Step 3: Run single-sample variant processing ---")
     cmd = [
-        sys.executable, "./hail/process_variants_single.py",
-        "--vep-vcf-dir",        config["vep_vcf_dir"],
-        "--final-output-dir",   config["final_output_dir"],
-        "--fullhaplogroups",    config["fullhaplogroups"],
-        "--contamination",      config["contamination"],
-        "--disease-meta-file",  config["disease_meta_file"],
-        "--gnomadcache",        config["gnomadcache"],
-        "--clinvarcache",       config["clinvarcache"],
-        "--mitomap-polycache",  config["mitomap_polycache"],
-        "--mitomap-diseasecache", config["mitomap_diseasecache"],
-        "--helixcache",         config["helixcache"],
-        "--haplogroup-varcache", config["haplogroup_varcache"],
-        "--mitimpactcache",     config["mitimpactcache"],
-        "--mitotipcache",       config["mitotipcache"],
-        "--hmtvarcache",        config["hmtvarcache"],
-    ]
+    sys.executable, "./hail/process_variants_single.py",
+    "--vep-vcf-dir",        config["vep_vcf_dir"],
+    "--final-output-dir",   config["final_output_dir"],
+    "--fullhaplogroups",    config["fullhaplogroups"],
+    "--contamination",      config["contamination"],
+    "--gnomadcache",        config["gnomadcache"],
+    "--clinvarcache",       config["clinvarcache"],
+    "--mitomap-polycache",  config["mitomap_polycache"],
+    "--mitomap-diseasecache", config["mitomap_diseasecache"],
+    "--helixcache",         config["helixcache"],
+    "--haplogroup-varcache", config["haplogroup_varcache"],
+    "--mitimpactcache",     config["mitimpactcache"],
+    "--mitotipcache",       config["mitotipcache"],
+    "--hmtvarcache",        config["hmtvarcache"],
+]
+
+    # ---- OPTIONAL disease meta ----
+    disease_meta = config.get("disease_meta_file", None)
+    if disease_meta is not None:
+        disease_meta = str(disease_meta).strip()
+        if disease_meta and disease_meta.lower() not in ("none", "null"):
+            if os.path.isfile(disease_meta):
+                cmd += ["--disease-meta-file", disease_meta]
+            else:
+                print(f"[WARN] disease_meta_file not found, skip: {disease_meta}")
+
     run_command(cmd, is_shell=False)
+
 
 # ==============================================================================
 # Entrypoint
