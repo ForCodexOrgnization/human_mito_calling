@@ -14,13 +14,14 @@ def run(cmd, cwd=None):
     if rc != 0:
         raise subprocess.CalledProcessError(rc, cmd)
 
-# Required configuration keys
+# Required configuration keys (Updated with 5 new keys)
 REQ_KEYS = [
     "vep_cache_dir", "pipeline_mode",
     "gnomadcache", "clinvarcache",
     "mitomap_polycache", "mitomap_diseasecache",
     "helixcache",
     "mitimpactcache", "mitotipcache", "hmtvarcache",
+    "napogeecache", "tapogeecache", "mlc_snv_cache", "mlc_indel_cache", "regional_constraint_cache"
 ]
 
 def load_cfg(p: str) -> dict:
@@ -47,11 +48,6 @@ def read_proband_list(meta_path: str) -> list[str]:
     """
     Read the disease metadata table and return a de-duplicated, sorted list
     of proband sample IDs.
-
-    Column detection (case-insensitive):
-      - sample column candidates: Sample, Sample_ID, SampleID, ID
-      - category column candidates: Category
-    Delimiter is inferred as tab if the header contains a tab, otherwise comma.
     """
     meta = Path(meta_path)
     if not meta.exists():
@@ -90,14 +86,7 @@ def read_proband_list(meta_path: str) -> list[str]:
 def filter_vcf_keep_if_any_proband(in_vcf: Path, out_vcf: Path, proband_names: list[str]) -> None:
     """
     Filter an *uncompressed* VCF to keep only records where at least one
-    proband sample column is present (non-missing), and emit only the fixed
-    9 columns plus proband sample columns.
-
-    Presence rules:
-      - A sample field is considered missing if empty or '.'.
-      - If the first subfield looks like GT (contains '/' or '|'), treat
-        '0/0', '0|0', and './.' as not present; everything else counts as present.
-      - If there is no GT (e.g., numeric value only), any non-'.' value counts as present.
+    proband sample column is present.
     """
     keep = set(proband_names)
     sel_idx = None
@@ -119,7 +108,6 @@ def filter_vcf_keep_if_any_proband(in_vcf: Path, out_vcf: Path, proband_names: l
                     raise SystemExit("ERROR: VCF must contain sample columns.")
                 fixed = cols[:9]
                 samples = cols[9:]
-                # Maintain original sample order while intersecting with proband names
                 sel_names = [s for s in samples if s in keep]
                 if not sel_names:
                     raise SystemExit("ERROR: None of the probands are present in the VCF header.")
@@ -141,7 +129,7 @@ def filter_vcf_keep_if_any_proband(in_vcf: Path, out_vcf: Path, proband_names: l
                 first = v.split(":", 1)[0]
                 if ("/" in first) or ("|" in first):
                     return first not in {"0/0", "0|0", "./."}
-                return True  # No GT subfield: non '.' counts as present
+                return True
 
             keep_row = any(present(sample_fields[i - 9]) for i in sel_idx)
             if not keep_row:
@@ -204,7 +192,7 @@ def main():
         run(vep_cmd)
     print(f"[+] VEP output: {out_vep}")
 
-    # ===== Post-processing (preserve your existing interface) =====
+    # ===== Post-processing (Updated to pass 5 new caches) =====
     post = [
         cfg["python"], cfg["post_script"],
         "--vep-vcf", str(out_vep),
@@ -217,6 +205,12 @@ def main():
         "--mitimpactcache",      cfg["mitimpactcache"],
         "--mitotipcache",        cfg["mitotipcache"],
         "--hmtvarcache",         cfg["hmtvarcache"],
+        # NEW caches
+        "--napogeecache",        cfg["napogeecache"],
+        "--tapogeecache",        cfg["tapogeecache"],
+        "--mlc_snv_cache",       cfg["mlc_snv_cache"],
+        "--mlc_indel_cache",     cfg["mlc_indel_cache"],
+        "--regional_constraint_cache", cfg["regional_constraint_cache"],
         "--pipeline-mode",       cfg["pipeline_mode"],
     ]
     if cfg["pipeline_mode"] == "disease":

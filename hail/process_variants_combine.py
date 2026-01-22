@@ -16,15 +16,37 @@ def load_complex_db(path: str, key_cols: list[str], val_cols: list[str], delimit
     if not os.path.exists(path):
         print(f"WARNING: Database {path} not found. Lookups will return default values.")
         return {}
-        
-    df = pd.read_csv(path, sep=delimiter, low_memory=False, dtype=str, comment="#")
+    
+    # 增加 encoding='ISO-8859-1' 解决 UnicodeDecodeError
+    df = pd.read_csv(path, sep=delimiter, low_memory=False, dtype=str, comment="#", encoding='ISO-8859-1')
+    
+    # 清洗列名，去除不可见空格
+    df.columns = df.columns.str.strip()
+    
     missing = [c for c in key_cols + val_cols if c not in df.columns]
     if missing:
-        raise SystemExit(f"ERROR: {os.path.basename(path)} missing columns: {missing}")
+        print(f"ERROR: {os.path.basename(path)} missing columns: {missing}")
+        print(f"Available columns: {list(df.columns)}")
+        raise SystemExit(1)
         
     idx = pd.MultiIndex.from_frame(df[key_cols])
     df["__values__"] = df[val_cols].apply(tuple, axis=1)
     return pd.Series(df["__values__"].values, index=idx).to_dict()
+
+def load_pos_only_db(path: str, pos_col: str, val_col: str, delimiter: str = "\t") -> dict:
+    """专门为 MLC Indel 设计：仅根据位置加载评分字典"""
+    if not os.path.exists(path):
+        print(f"WARNING: Database {path} not found.")
+        return {}
+    
+    df = pd.read_csv(path, sep=delimiter, low_memory=False, dtype=str, comment="#", encoding='ISO-8859-1')
+    df.columns = df.columns.str.strip()
+    
+    if pos_col not in df.columns or val_col not in df.columns:
+        print(f"ERROR: {os.path.basename(path)} missing columns: {[pos_col, val_col]}")
+        raise SystemExit(1)
+        
+    return pd.Series(df[val_col].values, index=df[pos_col]).to_dict()
 
 def get_hmtvar(k, hmtvar_db):
     """Extracts pathogenicity prediction from HmtVar JSON-like strings."""
@@ -54,6 +76,13 @@ def main() -> None:
     ap.add_argument("--mitimpactcache", required=True)
     ap.add_argument("--mitotipcache", required=True)
     ap.add_argument("--hmtvarcache", required=True)
+    
+    # NEW arguments
+    ap.add_argument("--napogeecache", required=True)
+    ap.add_argument("--tapogeecache", required=True)
+    ap.add_argument("--mlc_snv_cache", required=True)
+    ap.add_argument("--mlc_indel_cache", required=True)
+    ap.add_argument("--regional_constraint_cache", required=True)
 
     # Execution Mode
     ap.add_argument("--pipeline-mode", choices=["population", "disease"], required=True)
@@ -88,8 +117,26 @@ def main() -> None:
     apogee_db          = load_complex_db(args.mitimpactcache,       ["Ref", "Start", "Alt"],    ["APOGEE1", "APOGEE2"])
     hmtvar_db          = load_complex_db(args.hmtvarcache,          ["REF", "POS", "ALT"],      ["HmtVar"])
     
+    # NEW: nAPOGEE, tAPOGEE, MLC, and Regional Constraint
+    napogee_db = load_complex_db(args.napogeecache, ["ref", "start", "alt"], ["nAPOGEE_score"])
+    tapogee_db = load_complex_db(args.tapogeecache, ["Ref", "Pos", "Alt"], ["t-APOGEE score"])
+    
+    # MLC SNV 使用完全匹配 (假设列名为 Reference, Position, Alternate)
+    mlc_snv_db = load_complex_db(args.mlc_snv_cache, ["Reference", "Position", "Alternate"], ["MLC_score"])
+
+    # MLC Indel 仅使用 Position 匹配 (假设 Indel 文件中列名为 Position 和 MLC_pos_score)
+    mlc_indel_db = load_pos_only_db(args.mlc_indel_cache, "Position", "MLC_pos_score")
+    
+    rc_df = pd.read_csv(args.regional_constraint_cache, sep="\t", dtype=str, encoding='ISO-8859-1')
+    rc_df.columns = [c.strip() for c in rc_df.columns]
+    rc_db = pd.Series(
+        list(zip(rc_df["in_rc"], rc_df["min_distance_to_rc"])),
+        index=pd.MultiIndex.from_frame(rc_df[["REF", "POS", "ALT"]])
+    ).to_dict()
+
     # Custom Parsing for ClinVar
-    clinvar_df = pd.read_csv(args.clinvarcache, sep="\t", dtype=str)
+    clinvar_df = pd.read_csv(args.clinvarcache, sep="\t", dtype=str, encoding='ISO-8859-1')
+    clinvar_df.columns = [c.strip() for c in clinvar_df.columns]
     clinvar_df["pos"] = clinvar_df["GRCh38Location"]
     spdi = clinvar_df["Canonical SPDI"].str.split(":", expand=True)
     clinvar_df["ref"], clinvar_df["alt"] = spdi[2], spdi[3]
@@ -181,7 +228,7 @@ def main() -> None:
     # -------------------- Step 5: Database Annotation --------------------- #
     var_keys = list(zip(long_df["REF"], long_df["POS"], long_df["ALT"]))
     
-    # gnomAD: FIXED numeric conversion to avoid numpy AttributeError
+    # gnomAD: FIXED numeric conversion
     gvals = [gnomad_db.get(k, ("0", "0", "0")) for k in var_keys]
     long_df["gnomad_max_hl"] = [x[0] for x in gvals]
     long_df["gnomad_af_hom"] = pd.Series(pd.to_numeric([x[1] for x in gvals], errors="coerce")).fillna(0).values
@@ -197,7 +244,7 @@ def main() -> None:
     long_df["clinvar_interp"] = [clinvar_db.get(k, "") for k in var_keys]
     long_df["mitomap_gbcnt"]  = [mitomap_poly_db.get(k, ("0",))[0] for k in var_keys]
     
-    # MitoMap AF: FIXED numeric conversion
+    # MitoMap AF
     long_df["mitomap_af"] = pd.Series(pd.to_numeric(long_df["mitomap_gbcnt"], errors="coerce")).fillna(0).values / 61134.0
     
     md = [mitomap_disease_db.get(k, ("", "", "", "")) for k in var_keys]
@@ -207,6 +254,46 @@ def main() -> None:
     long_df["apogee_class"]   = [str(apogee_db.get(k, "")).strip("()").replace("'", "").replace(", ", "/") for k in var_keys]
     long_df["mitotip_class"]  = [mitotip_db.get(k, "") for k in var_keys]
     long_df["hmtvar_class"]   = [get_hmtvar(k, hmtvar_db) for k in var_keys]
+
+    # NEW: nAPOGEE, tAPOGEE, MLC_score, and in_regional_constraint
+    long_df["nAPOGEE"] = [napogee_db.get(k, ("",))[0] for k in var_keys]
+    long_df["tAPOGEE"] = [tapogee_db.get(k, ("",))[0] for k in var_keys]
+
+    def get_mlc_score(row):
+        # 如果是 SNV，使用 REF+POS+ALT 匹配
+        if row["VARIANT_CLASS"] == "SNV":
+            key = (row["REF"], row["POS"], row["ALT"])
+            return mlc_snv_db.get(key, ("",))[0]
+        else:
+            # 如果是 Indel，仅根据 POS 匹配
+            return mlc_indel_db.get(row["POS"], "")
+
+    long_df["MLC_score"] = long_df.apply(get_mlc_score, axis=1)
+
+    def get_rc_status(row):
+        cons = str(row.get("Consequence", "")).lower()
+        if "missense_variant" not in cons and "rrna_variant" not in cons:
+            return "NA"
+        
+        key = (row["REF"], row["POS"], row["ALT"])
+        rc_info = rc_db.get(key)
+        if not rc_info:
+            return "no"
+            
+        in_rc = str(rc_info[0]).lower()
+        try:
+            dist = float(rc_info[1])
+        except (ValueError, TypeError):
+            dist = 999.0
+            
+        if in_rc == "yes":
+            return "yes"
+        elif in_rc == "no" and dist <= 6:
+            return "proximal"
+        else:
+            return "no"
+
+    long_df["in_regional_constraint"] = long_df.apply(get_rc_status, axis=1)
 
     # Stats
     long_df["variant_key"] = long_df["POS"].astype(str) + ":" + long_df["REF"] + ":" + long_df["ALT"]
@@ -221,7 +308,8 @@ def main() -> None:
         "SampleID", "variant_key", "CHROM", "POS", "REF", "ALT", "FILTER", "GT", "AD", "AF", "DP", 
         "Consequence", "SYMBOL", "BIOTYPE", "HGVSc", "HGVSp", "Codons", "VARIANT_CLASS", 
         "gnomad_max_hl", "gnomad_af_hom", "gnomad_af_het", "apogee_class", "mitotip_class", 
-        "hmtvar_class", "helix_max_hl", "helix_af_hom", "helix_af_het", "mitomap_gbcnt", 
+        "hmtvar_class", "nAPOGEE", "tAPOGEE", "MLC_score", "in_regional_constraint",
+        "helix_max_hl", "helix_af_hom", "helix_af_het", "mitomap_gbcnt", 
         "mitomap_af", "mitomap_status", "mitomap_plasmy", "mitomap_disease", "clinvar_interp", 
         "in_cohort_AC", "Freq"
     ]

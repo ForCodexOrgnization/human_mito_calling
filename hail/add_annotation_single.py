@@ -147,21 +147,27 @@ def step3_run_variant_processor(config):
     """
     print("\n--- Step 3: Run single-sample variant processing ---")
     cmd = [
-    sys.executable, "./hail/process_variants_single.py",
-    "--vep-vcf-dir",        config["vep_vcf_dir"],
-    "--final-output-dir",   config["final_output_dir"],
-    "--fullhaplogroups",    config["fullhaplogroups"],
-    "--contamination",      config["contamination"],
-    "--gnomadcache",        config["gnomadcache"],
-    "--clinvarcache",       config["clinvarcache"],
-    "--mitomap-polycache",  config["mitomap_polycache"],
-    "--mitomap-diseasecache", config["mitomap_diseasecache"],
-    "--helixcache",         config["helixcache"],
-    "--haplogroup-varcache", config["haplogroup_varcache"],
-    "--mitimpactcache",     config["mitimpactcache"],
-    "--mitotipcache",       config["mitotipcache"],
-    "--hmtvarcache",        config["hmtvarcache"],
-]
+        sys.executable, "./hail/process_variants_single.py",
+        "--vep-vcf-dir",        config["vep_vcf_dir"],
+        "--final-output-dir",   config["final_output_dir"],
+        "--fullhaplogroups",    config["fullhaplogroups"],
+        "--contamination",      config["contamination"],
+        "--gnomadcache",        config["gnomadcache"],
+        "--clinvarcache",       config["clinvarcache"],
+        "--mitomap-polycache",  config["mitomap_polycache"],
+        "--mitomap-diseasecache", config["mitomap_diseasecache"],
+        "--helixcache",         config["helixcache"],
+        "--haplogroup-varcache", config["haplogroup_varcache"],
+        "--mitimpactcache",     config["mitimpactcache"],
+        "--mitotipcache",       config["mitotipcache"],
+        "--hmtvarcache",        config["hmtvarcache"],
+        # ---- NEW annotation caches ----
+        "--napogeecache",       config["napogeecache"],
+        "--tapogeecache",       config["tapogeecache"],
+        "--mlc_snv_cache",      config["mlc_snv_cache"],
+        "--mlc_indel_cache",    config["mlc_indel_cache"],
+        "--regional_constraint_cache", config["regional_constraint_cache"],
+    ]
 
     # ---- OPTIONAL disease meta ----
     disease_meta = config.get("disease_meta_file", None)

@@ -14,10 +14,38 @@ import pandas as pd
 
 def load_complex_db(path, key_cols, val_cols, delimiter: str = "\t") -> dict:
     """Load a tabular annotation file as a dict keyed by multiple columns."""
-    df = pd.read_csv(path, sep=delimiter, low_memory=False, dtype=str, comment="#")
+    # 增加 encoding='ISO-8859-1' 解决 UnicodeDecodeError
+    df = pd.read_csv(path, sep=delimiter, low_memory=False, dtype=str, comment="#", encoding='ISO-8859-1')
+    # 清洗列名，去除不可见空格
+    df.columns = [c.strip() for c in df.columns]
+    
     idx = pd.MultiIndex.from_frame(df[key_cols])
     df["__vals__"] = df[val_cols].apply(tuple, axis=1)
     return pd.Series(df["__vals__"].values, index=idx).to_dict()
+
+
+def load_simple_val_db(path, key_cols, val_col, delimiter: str = "\t") -> dict:
+    """Load a tabular file as a dict returning a single value."""
+    # 增加 encoding='ISO-8859-1' 并清洗列名
+    df = pd.read_csv(path, sep=delimiter, low_memory=False, dtype=str, comment="#", encoding='ISO-8859-1')
+    df.columns = [c.strip() for c in df.columns]
+    
+    # 校验列是否存在，打印友好报错
+    missing = [c for c in key_cols + [val_col] if c not in df.columns]
+    if missing:
+        print(f"ERROR: Missing columns {missing} in {path}")
+        print(f"Available columns: {list(df.columns)}")
+        raise KeyError(f"Columns {missing} not found in {path}")
+
+    idx = pd.MultiIndex.from_frame(df[key_cols])
+    return pd.Series(df[val_col].values, index=idx).to_dict()
+
+
+def load_pos_only_db(path, pos_col, val_col, delimiter: str = "\t") -> dict:
+    """专门为 MLC Indel 设计：仅根据位置加载评分字典"""
+    df = pd.read_csv(path, sep=delimiter, low_memory=False, dtype=str, comment="#", encoding='ISO-8859-1')
+    df.columns = df.columns.str.strip()
+    return pd.Series(df[val_col].values, index=df[pos_col]).to_dict()
 
 
 # ==============================================================================
@@ -36,7 +64,7 @@ def process_and_filter_variants(args) -> None:
         args.contamination, sep="\t", header=0, dtype=str, index_col=0
     ).squeeze("columns").to_dict()
 
-    # Optional: disease meta (SampleID/Category with flexible casing)
+    # Optional: disease meta
     category_dict = {}
     if args.disease_meta_file and os.path.isfile(args.disease_meta_file):
         meta = pd.read_csv(args.disease_meta_file, sep="\t", dtype=str)
@@ -61,7 +89,6 @@ def process_and_filter_variants(args) -> None:
         ["status", "homoplasmy", "heteroplasmy", "disease"]
     )
 
-    # Haplogroup-specific variants (string key REF+POS+ALT → comma-separated haplos)
     hgv = pd.read_csv(args.haplogroup_varcache, sep="\t", dtype=str)
     haplovar_db = pd.Series(hgv.Assoc_haplogroups.values, index=hgv.Variant) \
                     .str.lower().to_dict()
@@ -70,17 +97,30 @@ def process_and_filter_variants(args) -> None:
         args.mitimpactcache, ["Ref", "Start", "Alt"], ["APOGEE1", "APOGEE2"]
     )
 
+    # 修改：根据您的文件头，使用大写 'Ref', 'Start', 'Alt'
+    napogee_db = load_simple_val_db(args.napogeecache, ["ref", "start", "alt"], "nAPOGEE_score")
+    tapogee_db = load_simple_val_db(args.tapogeecache, ["Ref", "Pos", "Alt"], "t-APOGEE score")
+
+    # 修改：MLC 数据库加载
+    # SNV 使用完全匹配
+    mlc_snv_db = load_simple_val_db(args.mlc_snv_cache, ["Reference", "Position", "Alternate"], "MLC_score")
+    # Indel 仅使用位置匹配 (假设 Indel 文件中位置列名为 'Position')
+    mlc_indel_db = load_pos_only_db(args.mlc_indel_cache, "Position", "MLC_pos_score")
+
+    # NEW: Regional Constraint
+    rc_df = pd.read_csv(args.regional_constraint_cache, sep="\t", dtype=str, encoding='ISO-8859-1')
+    rc_df.columns = [c.strip() for c in rc_df.columns]
+    rc_db = pd.Series(
+        list(zip(rc_df["in_rc"], rc_df["min_distance_to_rc"])),
+        index=pd.MultiIndex.from_frame(rc_df[["REF", "POS", "ALT"]])
+    ).to_dict()
+
     hmtvar_db = load_complex_db(
         args.hmtvarcache, ["REF", "POS", "ALT"], ["HmtVar"]
     )
 
-    # MitoTIP (quartile → label)
-    mitotip_map = {
-        "Q1": "likely pathogenic",
-        "Q2": "possibly pathogenic",
-        "Q3": "possibly benign",
-        "Q4": "likely benign",
-    }
+    # MitoTIP
+    mitotip_map = {"Q1": "likely pathogenic", "Q2": "possibly pathogenic", "Q3": "possibly benign", "Q4": "likely benign"}
     mitotip_df = pd.read_csv(args.mitotipcache, sep="\t", dtype=str)
     mitotip_df["prediction"] = mitotip_df["Quartile"].map(mitotip_map)
     mitotip_db = pd.Series(
@@ -88,7 +128,7 @@ def process_and_filter_variants(args) -> None:
         index=tuple(zip(mitotip_df["rCRS"], mitotip_df["Position"], mitotip_df["Alt"]))
     ).to_dict()
 
-    # HelixMTdb (normalize fields, derive max heteroplasmy)
+    # HelixMTdb
     helix = pd.read_csv(args.helixcache, sep="\t", dtype=str)
     helix = helix[helix["alleles"].str.count(",") == 1].copy()
     helix["pos"] = helix["locus"].str.split("chrM:").str[1]
@@ -106,8 +146,9 @@ def process_and_filter_variants(args) -> None:
         index=pd.MultiIndex.from_frame(helix[["ref", "pos", "alt"]])
     ).to_dict()
 
-    # ClinVar (bi-allelic SNVs, exclude “Conflicting”)
-    clin = pd.read_csv(args.clinvarcache, sep="\t", dtype=str)
+    # ClinVar
+    clin = pd.read_csv(args.clinvarcache, sep="\t", dtype=str, encoding='ISO-8859-1')
+    clin.columns = [c.strip() for c in clin.columns]
     clin["pos"] = clin["GRCh38Location"]
     spdi = clin["Canonical SPDI"].str.split(":", expand=True)
     clin["ref"], clin["alt"] = spdi[2], spdi[3]
@@ -135,20 +176,18 @@ def process_and_filter_variants(args) -> None:
         lines = [l for l in f if not l.startswith("##")]
     vcf = pd.read_csv(io.StringIO("".join(lines)), sep="\t", dtype=str) \
              .rename(columns={"#CHROM": "CHROM"})
+    
     if vcf.empty:
         print("[!] Empty VCF after header removal.")
         return
 
-    # Single-sample: take the first sample column and rename to SAMPLE_DATA
     sample_col = vcf.columns[9]
     vcf = vcf.rename(columns={sample_col: "SAMPLE_DATA"})
 
-    # Hard drop if contaminated
     if str(contam_dict.get(sample_col, "")).upper() == "YES":
         print(f"[!] Sample {sample_col} flagged as contaminated; no output.")
         return
 
-    # Drop upstream hard-fail sites
     vcf = vcf[~vcf["FILTER"].str.contains(
         "base_qual|strand_bias|weak_evidence|blacklisted_site|contamination|position",
         na=False
@@ -157,7 +196,6 @@ def process_and_filter_variants(args) -> None:
         print("[!] No variants after FILTER cleanup.")
         return
 
-    # FORMAT parsing: “AF” → Heteroplasmy; DP to numeric
     fmt = vcf["SAMPLE_DATA"].str.split(":", n=4, expand=True)
     fmt.columns = ["GT", "AD", "AF", "DP", "Other"][:fmt.shape[1]]
     for c in fmt.columns:
@@ -165,14 +203,10 @@ def process_and_filter_variants(args) -> None:
     vcf["Heteroplasmy"] = pd.to_numeric(vcf["AF"], errors="coerce")
     vcf["DP"] = pd.to_numeric(vcf["DP"], errors="coerce")
 
-    # ---- FIXED VEP INFO parsing ----
-    # VCF INFO fields often contain tags like DP=X;AF=Y;CSQ=Allele|Consequence...
-    # Direct splitting of the whole INFO column causes index shifting.
-    # We must isolate the CSQ (VEP) string first.
     def extract_csq(info_str):
         for segment in info_str.split(";"):
             if segment.startswith("CSQ="):
-                return segment[4:] # Remove 'CSQ=' prefix
+                return segment[4:]
         return ""
 
     vcf["CSQ_STRING"] = vcf["INFO"].apply(extract_csq)
@@ -185,24 +219,18 @@ def process_and_filter_variants(args) -> None:
         "VARIANT_CLASS", "SYMBOL_SOURCE", "HGNC_ID", "HGVS_OFFSET",
     ]
     
-    # Split the isolated CSQ string by the pipe character
     vep_split = vcf["CSQ_STRING"].str.split("|", expand=True)
-    
-    # After stripping 'CSQ=', index 0 is Allele, 1 is Consequence, 2 is IMPACT
     vep_start = 0 
     take = min(len(info_cols), max(0, vep_split.shape[1] - vep_start))
     
     if take > 0:
         vcf[info_cols[:take]] = vep_split.iloc[:, vep_start: vep_start + take]
 
-    # Clean up temporary parsing column
     vcf.drop(columns=["CSQ_STRING"], inplace=True)
 
-    # Metadata columns
     vcf["SAMPLE_ID"] = sample_col
     vcf["Haplogroup"] = vcf["SAMPLE_ID"].map(hap_dict)
 
-    # Disease meta (if present)
     if category_dict:
         vcf["Sample_Category"] = vcf["SAMPLE_ID"].str.split("-").str[0] \
             .str.lower().map(category_dict)
@@ -226,7 +254,47 @@ def process_and_filter_variants(args) -> None:
     vcf["mitomap_plasmy"] = [f"{d[1]}/{d[2]}" if d[1] or d[2] else "" for d in md]
     vcf["mitomap_disease"] = [d[3] for d in md]
 
-    # Haplogroup-variant status (presence vs. current sample’s haplogroup)
+    # New Annotation Mapping
+    vcf["nAPOGEE"] = [napogee_db.get(k, "") for k in keys]
+    vcf["tAPOGEE"] = [tapogee_db.get(k, "") for k in keys]
+
+    def get_mlc_score(row):
+        # 如果是 SNV，使用 REF+POS+ALT 匹配
+        if row["VARIANT_CLASS"] == "SNV":
+            key = (row["REF"], row["POS"], row["ALT"])
+            return mlc_snv_db.get(key, "")
+        else:
+            # 如果是 Indel，仅根据 POS 匹配
+            return mlc_indel_db.get(row["POS"], "")
+
+    vcf["MLC_score"] = vcf.apply(get_mlc_score, axis=1)
+
+    # Regional Constraint logic
+    def get_rc_status(row):
+        cons = str(row.get("Consequence", "")).lower()
+        if "missense_variant" not in cons and "rrna_variant" not in cons:
+            return "NA"
+        
+        key = (row["REF"], row["POS"], row["ALT"])
+        rc_info = rc_db.get(key)
+        if not rc_info:
+            return "no"
+            
+        in_rc = str(rc_info[0]).lower()
+        try:
+            dist = float(rc_info[1])
+        except (ValueError, TypeError):
+            dist = 999.0
+            
+        if in_rc == "yes":
+            return "yes"
+        elif in_rc == "no" and dist <= 6:
+            return "proximal"
+        else:
+            return "no"
+
+    vcf["in_regional_constraint"] = vcf.apply(get_rc_status, axis=1)
+
     def haplo_status(row):
         key = f"{row['REF']}{row['POS']}{row['ALT']}"
         assoc = haplovar_db.get(key)
@@ -240,7 +308,6 @@ def process_and_filter_variants(args) -> None:
 
     vcf["Haplogroup_Var_Status"] = vcf.apply(haplo_status, axis=1)
 
-    # APOGEE / MitoTIP / HmtVar
     vcf["apogee_class"] = [
         str(apogee_db.get(k, "")).strip("()").replace("'", "").replace(", ", "/")
         for k in keys
@@ -258,15 +325,13 @@ def process_and_filter_variants(args) -> None:
 
     vcf["hmtvar_class"] = [get_hmtvar(k) for k in keys]
 
-    # Numeric coercions for filtering/sorting
     for c in ["gnomad_af_hom", "helix_af_hom", "mitomap_af"]:
         vcf[c] = pd.to_numeric(vcf[c], errors="coerce")
 
-    # Single-sample compatibility column
     if "Freq" not in vcf.columns:
         vcf["Freq"] = 0
 
-    # ---- output columns ----
+    # Output columns
     final_cols = [
         "SAMPLE_ID", "CHROM", "POS", "REF", "ALT", "FILTER",
         "GT", "AD", "Heteroplasmy", "DP",
@@ -275,6 +340,7 @@ def process_and_filter_variants(args) -> None:
         "Haplogroup", "Haplogroup_Var_Status",
         "gnomad_max_hl", "gnomad_af_hom", "gnomad_af_het",
         "apogee_class", "mitotip_class", "hmtvar_class",
+        "nAPOGEE", "tAPOGEE", "MLC_score", "in_regional_constraint",
         "helix_max_hl", "helix_af_hom", "helix_af_het",
         "mitomap_gbcnt", "mitomap_af",
         "mitomap_status", "mitomap_plasmy", "mitomap_disease",
@@ -286,12 +352,10 @@ def process_and_filter_variants(args) -> None:
 
     os.makedirs(args.final_output_dir, exist_ok=True)
 
-    # Prefilter table
     pre_path = os.path.join(args.final_output_dir, "variant_list_prefiltering.txt")
     vcf[final_cols].to_csv(pre_path, sep="\t", index=False, na_rep="")
     print(f"[+] Prefiltering table saved to: {pre_path}")
 
-    # Final filtered table
     filtered = vcf[
         (vcf["gnomad_af_hom"] < 0.01) &
         (vcf["helix_af_hom"]  < 0.01) &
@@ -332,6 +396,11 @@ if __name__ == "__main__":
     ap.add_argument("--helixcache", required=True)
     ap.add_argument("--haplogroup-varcache", required=True)
     ap.add_argument("--mitimpactcache", required=True)
+    ap.add_argument("--napogeecache", required=True)
+    ap.add_argument("--tapogeecache", required=True)
+    ap.add_argument("--mlc_snv_cache", required=True)
+    ap.add_argument("--mlc_indel_cache", required=True)
+    ap.add_argument("--regional_constraint_cache", required=True)
     ap.add_argument("--mitotipcache", required=True)
     ap.add_argument("--hmtvarcache", required=True)
     args = ap.parse_args()
