@@ -328,9 +328,6 @@ def process_and_filter_variants(args) -> None:
     for c in ["gnomad_af_hom", "helix_af_hom", "mitomap_af"]:
         vcf[c] = pd.to_numeric(vcf[c], errors="coerce")
 
-    if "Freq" not in vcf.columns:
-        vcf["Freq"] = 0
-
     # Output columns
     final_cols = [
         "SAMPLE_ID", "CHROM", "POS", "REF", "ALT", "FILTER",
@@ -344,7 +341,7 @@ def process_and_filter_variants(args) -> None:
         "helix_max_hl", "helix_af_hom", "helix_af_het",
         "mitomap_gbcnt", "mitomap_af",
         "mitomap_status", "mitomap_plasmy", "mitomap_disease",
-        "clinvar_interp", "Freq",
+        "clinvar_interp",
     ]
     for c in final_cols:
         if c not in vcf.columns:
@@ -356,14 +353,16 @@ def process_and_filter_variants(args) -> None:
     vcf[final_cols].to_csv(pre_path, sep="\t", index=False, na_rep="")
     print(f"[+] Prefiltering table saved to: {pre_path}")
 
+    clinvar_junk_pos = ["73", "263", "16159", "16182", "16183", "16223"]
+
     filtered = vcf[
         (vcf["gnomad_af_hom"] < 0.01) &
         (vcf["helix_af_hom"]  < 0.01) &
         (vcf["mitomap_af"]    < 0.01) &
         (vcf["Consequence"]   != "synonymous_variant") &
-        (pd.to_numeric(vcf["Freq"], errors="coerce").fillna(0) < 100) &
         (vcf["Heteroplasmy"].fillna(0) > 0.05) &
-        (~vcf["clinvar_interp"].isin(["Benign", "Likely benign"])) &
+        (~vcf["clinvar_interp"].isin(["Benign", "Likely benign", "Affects"])) &
+        (~vcf["POS"].isin(clinvar_junk_pos)) &
         (vcf["Haplogroup_Var_Status"] != "haplo_var_match")
     ].copy()
 

@@ -299,8 +299,7 @@ def main() -> None:
     long_df["variant_key"] = long_df["POS"].astype(str) + ":" + long_df["REF"] + ":" + long_df["ALT"]
     ac_counts = long_df[long_df["AF"] > 0]["variant_key"].value_counts().to_dict()
     long_df["in_cohort_AC"] = long_df["variant_key"].map(ac_counts).fillna(0).astype(int)
-    long_df["Freq"] = (long_df["in_cohort_AC"] / len(sample_cols) * 100) if sample_cols else 0.0
-
+    long_df["in_cohort_AF"] = (long_df["in_cohort_AC"] / len(sample_cols)) if sample_cols else 0.0
     long_df = long_df[long_df["AF"] > 0].copy()
 
     # -------------------- Step 6: Export Results -------------------------- #
@@ -311,7 +310,7 @@ def main() -> None:
         "hmtvar_class", "nAPOGEE", "tAPOGEE", "MLC_score", "in_regional_constraint",
         "helix_max_hl", "helix_af_hom", "helix_af_het", "mitomap_gbcnt", 
         "mitomap_af", "mitomap_status", "mitomap_plasmy", "mitomap_disease", "clinvar_interp", 
-        "in_cohort_AC", "Freq"
+        "in_cohort_AC", "in_cohort_AF"
     ]
     for c in base_cols:
         if c not in long_df.columns: long_df[c] = pd.NA
@@ -320,7 +319,9 @@ def main() -> None:
     fname = "Proband_variant_list" if args.pipeline_mode == "disease" else "variant_list"
     pre_out.to_csv(os.path.join(outdir, f"{fname}_prefiltering.txt"), sep="\t", index=False, na_rep="")
 
-    for col in ["gnomad_af_hom", "helix_af_hom", "mitomap_af", "Heteroplasmy", "Freq"]:
+    clinvar_junk_pos = ["73", "263", "16159", "16182", "16183", "16223"]
+
+    for col in ["gnomad_af_hom", "helix_af_hom", "mitomap_af", "Heteroplasmy", "in_cohort_AF"]:
         pre_out[col] = pd.to_numeric(pre_out[col], errors="coerce")
 
     filt = pre_out[
@@ -328,9 +329,10 @@ def main() -> None:
         (pre_out["helix_af_hom"] < 0.01) &
         (pre_out["mitomap_af"] < 0.01) &
         (pre_out["Consequence"] != "synonymous_variant") &
-        (pre_out["Freq"] < 100) &
+        (pre_out["in_cohort_AF"] <= 1.0) &
         (pre_out["Heteroplasmy"] > 0.01) & 
-        (~pre_out["clinvar_interp"].isin(["Benign", "Likely benign"]))
+        (~pre_out["clinvar_interp"].isin(["Benign", "Likely benign", "Affects"])) &
+        (~pre_out["POS"].isin(clinvar_junk_pos))
     ].copy()
 
     if not filt.empty:
