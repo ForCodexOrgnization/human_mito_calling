@@ -33,8 +33,8 @@ ch_ref_genome_tuple = ch_ref_fasta_val.map { rf -> tuple(rf, rf) }
 ch_fasta_only = ch_ref_fasta_val
 
 // Cromwell config & Hail script directory
-ch_cromwell_conf  = Channel.fromPath("${baseDir}/cromwell.conf")
-ch_hail_directory = Channel.fromPath(params.hail_script)
+ch_cromwell_conf  = Channel.value("${baseDir}/cromwell.conf")
+ch_hail_directory = Channel.value(params.hail_script)
 
 // Build input rows from a 2–3 column TSV: [sample_id, file1, file2]
 // FASTQ: R1/R2; CRAM: cram/crai; BAM: bam/(blank or index)
@@ -76,7 +76,21 @@ ch_input_rows = Channel
         if( ft == 'CRAM' && (!f2_list || !f2_list[0] || !f2_list[0].toString().trim()))
             error "Sample ${meta.id} is CRAM input but missing CRAI in column 3."
         def pairs = (0..<f1_list.size()).collect { i -> [ f1_list[i], (f2_list ? f2_list[i] : null) ] }
-        [ meta, ft, pairs ]
+        
+        def final_output = file("${params.outdir}/${meta.id}/annotation/final_outputs/variant_list.txt")
+        def already_done = final_output.exists()
+
+        [ meta, ft, pairs, already_done ]
+    }
+    .filter { meta, ft, pairs, already_done ->
+        if (already_done) {
+            log.info "Skipping Sample: ${meta.id} (Final output already exists in ${params.outdir})"
+            return false 
+        }
+        return true 
+    }
+    .map { meta, ft, pairs, already_done -> 
+        [ meta, ft, pairs ] 
     }
 
 def ch_fastqs = ch_input_rows.filter { meta, ft, pairs -> ft == 'FASTQ' }
@@ -390,15 +404,13 @@ process CALCULATE_MTCN {
   CRAI_ABS=\$(readlink -f ${crai})
   MT_COV_ABS=\$(readlink -f ${mt_coverage})
 
-  python ${hail_dir}/calculate_mtcn.py \\
+  python ${hail_dir}/calculate_mtcn_mosdepth.py \\
       --cram "\${CRAM_ABS}" \\
       --crai "\${CRAI_ABS}" \\
       --ref_fasta "\${REF_ABS}" \\
       --mt_coverage "\${MT_COV_ABS}" \\
       --output mtcn_out \\
-      --picard ${params.picard} \\
-      ${intervals_arg} \\
-      --read_length 150 \\
+      --mosdepth ${params.mosdepth} \\
       --min_mt_cov ${params.min_mt_cov ?: 100} \\
       --min_mtcn ${params.min_mtcn ?: 50} \\
       --max_mtcn ${params.max_mtcn ?: 500} \\

@@ -180,6 +180,7 @@ process COMBINE_SUMMARY_LOGS {
     input:
     path entry_files
     val status
+    val expected_count
 
     output:
     path "pipeline_summary_log.txt"
@@ -207,9 +208,13 @@ Sample_ID\tStatus\tPass_Filter\tmt_Cov\tmtCN\tContamination\tNote
         cat ${entry_files} | sort >> pipeline_summary_log.txt
     fi
 
+    EXPECTED_COUNT=${expected_count}
+    ACTUAL_COUNT=\$(ls *.individual_entry.txt | wc -l)
+
     # 3. Final check and cleanup
-    if [ "${status}" == "FAILED" ]; then
-        echo -e "\n[ERROR] THE MERGE/ANNOTATION STAGE FAILED. PLEASE CHECK SLURM LOGS." >> pipeline_summary_log.txt
+    if [ "${status}" == "FAILED" ] || [ "\$ACTUAL_COUNT" -lt "\$EXPECTED_COUNT" ]; then
+        echo -e "\n[ERROR] THE MERGE STAGE FAILED OR SAMPLES MISSING." >> pipeline_summary_log.txt
+        echo -e "[ERROR] Expected: \$EXPECTED_COUNT, Found: \$ACTUAL_COUNT" >> pipeline_summary_log.txt
         echo "Error: Stage 2 refinement failed." >&2
         exit 1
     else
@@ -231,11 +236,12 @@ workflow FINALIZER {
   COMBINE_VCFS(ch_vcfs, ANNOTATE_COVERAGE.out.coverage_mt, ch_hail_dir)
   REFINE_ANNOTATION(COMBINE_VCFS.out.combined_vcf, ch_hail_dir)
 
+  ch_expected_count = ch_vcfs.map { list -> list.size()}
   ch_combine_status = REFINE_ANNOTATION.out.refined_results
         .map { "SUCCESS" }
         .ifEmpty("FAILED")
 
-  COMBINE_SUMMARY_LOGS(ch_summary_entries, ch_combine_status)
+  COMBINE_SUMMARY_LOGS(ch_summary_entries, ch_combine_status, ch_expected_count)
 }
 
 workflow { FINALIZER() }
