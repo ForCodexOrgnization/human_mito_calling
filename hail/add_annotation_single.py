@@ -62,7 +62,8 @@ def _run_vep_single(file_path, config):
 
         print(f"[*] Starting VEP for: {base}")
         vep_args = [
-            "vep", "--cache",
+            "vep", "--offline","--cache",
+            "--fasta", config['reference_genome_path'],
             "-i", file_path,
             "-o", out_vcf,
             "--dir_cache", cache_dir,

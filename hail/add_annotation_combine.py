@@ -180,7 +180,8 @@ def main():
         print(f"[SKIP] VEP output exists: {out_vep}")
     else:
         vep_cmd = [
-            cfg["vep_bin"], "--cache",
+            cfg["vep_bin"], "--offline","--cache",
+            "--fasta", cfg["reference_genome_path"],
             "-i", str(vep_input),
             "-o", str(out_vep),
             "--dir_cache", cfg["vep_cache_dir"],
