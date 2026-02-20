@@ -3,6 +3,7 @@
 #SBATCH --cpus-per-task=2                        # Recommended: 2 CPUs as one batch handles multiple samples
 #SBATCH --mem=8G                                 # Recommended: 8GB depending on BATCH_SIZE
 #SBATCH --time=24:00:00                          # Max walltime
+#SBATCH --partition=ycga
 #SBATCH --output=log/mito_batch_mgr_%j.log       # Main manager log file
 
 # Exit immediately if a command exits with a non-zero status
