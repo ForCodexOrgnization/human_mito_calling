@@ -34,7 +34,7 @@ DISEASE_PED_FILE=""
 module load Nextflow/24.10.2
 
 # Temporary file to store the list of unique samples
-INTERNAL_SAMPLE_LIST="unique_samples_for_job_array.list"
+INTERNAL_SAMPLE_LIST="${OUTPUT_DIR}/unique_samples_for_job_array.list"
 
 # ==============================================================================
 #                            Mode 3: Finalizer Mode (Stage 2)
@@ -64,6 +64,7 @@ if [ "$1" == "--finalize" ]; then
         -profile cluster \
         -resume \
         --merged_dir "$MERGED_INPUT_DIR" \
+        --input "${INTERNAL_SAMPLE_LIST}" \
         --pipeline_mode "$PIPELINE_MODE" \
         --outdir "$OUTPUT_DIR" \
         "${EXTRA_ARGS[@]}" \
@@ -154,6 +155,7 @@ elif [ -n "$SLURM_ARRAY_TASK_ID" ]; then
 else
     echo "--- STAGE 0: MASTER MODE - Initializing Batching and Submission ---"
     mkdir -p log
+    mkdir -p "$OUTPUT_DIR"
     
     # 1. Generate a unique sample list (excluding header)
     cut -f1 "$MASTER_SAMPLE_LIST" | grep -vi "^sample" | sort -u > "$INTERNAL_SAMPLE_LIST"

@@ -22,23 +22,6 @@ Launch directory:  ${workflow.launchDir}
 // ======================================================================
 // TOP-LEVEL CHANNELS (avoid file() at operators here)
 // ======================================================================
-
-// Pass the FASTA path as a value; each process will stage/index via `path(...)` itself.
-ch_ref_fasta_val = Channel.value(params.wdl_inputs.ref_fasta)
-
-// Preserve original tuple shape (ref_fasta, ref_prefix) if needed downstream.
-ch_ref_genome_tuple = ch_ref_fasta_val.map { rf -> tuple(rf, rf) }
-
-// FASTA only (e.g., used by samtools -T)
-ch_fasta_only = ch_ref_fasta_val
-
-// Cromwell config & Hail script directory
-ch_cromwell_conf  = Channel.value("${baseDir}/cromwell.conf")
-ch_hail_directory = Channel.value(params.hail_script)
-
-// Build input rows from a 2–3 column TSV: [sample_id, file1, file2]
-// FASTQ: R1/R2; CRAM: cram/crai; BAM: bam/(blank or index)
-// ---------- SAFE build of ch_input_rows ----------
 if( !params.input ) {
     System.err.println("FATAL: Missing --input parameter.")
     System.exit(1)
@@ -48,6 +31,11 @@ if( !_in.exists() ) {
     System.err.println("FATAL: Input file does not exist: ${params.input}")
     System.exit(1)
 }
+
+ch_ref_fasta_val = Channel.value(params.wdl_inputs.ref_fasta)
+
+ch_cromwell_conf  = Channel.value(file("${baseDir}/cromwell.conf"))
+ch_hail_directory = Channel.value(file(params.hail_script))
 
 ch_input_rows = Channel
     .fromPath(_in)
@@ -69,33 +57,47 @@ ch_input_rows = Channel
         if( unique_types.size() > 1 )
             error "Sample ${meta.id} contains mixed input file types: ${unique_types}."
         def ft = unique_types[0]
-        if( ft == 'UNKNOWN' )
-            error "Sample ${meta.id} has unknown file type for ${f1_list[0]}"
-        if( ft in ['CRAM','BAM'] && f1_list.size() > 1 )
-            error "Sample ${meta.id} has ${ft} input but multiple files were listed. Provide ONE merged ${ft}."
-        if( ft == 'CRAM' && (!f2_list || !f2_list[0] || !f2_list[0].toString().trim()))
-            error "Sample ${meta.id} is CRAM input but missing CRAI in column 3."
-        def pairs = (0..<f1_list.size()).collect { i -> [ f1_list[i], (f2_list ? f2_list[i] : null) ] }
         
-        def final_output = file("${params.outdir}/${meta.id}/annotation/final_outputs/variant_list.txt")
-        def already_done = final_output.exists()
+        // CHECK 1: 
+        def annotation_done = file("${params.outdir}/${meta.id}/annotation/final_outputs/variant_list.txt").exists()
+        
+        // CHECK 2: 
+        def vcf = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.final.split.vcf")
+        def ctm = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.haplocheck_contamination.txt")
+        def cov = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.per_base_coverage.tsv")
+        def wdl_done = vcf.exists() && ctm.exists() && cov.exists()
 
-        [ meta, ft, pairs, already_done ]
+        meta.annotation_done = annotation_done
+        meta.wdl_done = wdl_done
+
+        def pairs = (0..<f1_list.size()).collect { i -> [ f1_list[i], (f2_list ? f2_list[i] : null) ] }
+        [ meta, ft, pairs ]
     }
-    .filter { meta, ft, pairs, already_done ->
-        if (already_done) {
-            log.info "Skipping Sample: ${meta.id} (Final output already exists in ${params.outdir})"
+    .filter { meta, ft, pairs ->
+        if (meta.annotation_done) {
+            log.info "Skipping Sample: ${meta.id} (Full results already exist)"
             return false 
         }
         return true 
     }
-    .map { meta, ft, pairs, already_done -> 
-        [ meta, ft, pairs ] 
-    }
 
-def ch_fastqs = ch_input_rows.filter { meta, ft, pairs -> ft == 'FASTQ' }
-def ch_crams  = ch_input_rows.filter { meta, ft, pairs -> ft == 'CRAM'  }
-def ch_bams   = ch_input_rows.filter { meta, ft, pairs -> ft == 'BAM'   }
+def ch_fastqs = ch_input_rows.filter { meta, ft, pairs -> ft == 'FASTQ' && !meta.wdl_done }
+def ch_crams  = ch_input_rows.filter { meta, ft, pairs -> ft == 'CRAM'  && !meta.wdl_done }
+def ch_bams   = ch_input_rows.filter { meta, ft, pairs -> ft == 'BAM'   && !meta.wdl_done }
+
+ch_skipped_wdl_results = ch_input_rows
+    .filter { meta, ft, pairs -> meta.wdl_done }
+    .map { meta, ft, pairs ->
+      
+        def input_cram = file(pairs[0][0])
+        def input_crai = file(pairs[0][1])
+        
+        def vcf = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.final.split.vcf")
+        def ctm = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.haplocheck_contamination.txt")
+        def cov = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.per_base_coverage.tsv")
+        
+        return tuple(meta, vcf, ctm, cov, input_cram, input_crai)
+    }
 
 // ======================================================================
 /*                              PROCESSES                               */
@@ -617,42 +619,40 @@ workflow {
   GENERATE_WDL_JSON(GENERATE_CRAM_TSV.out.tsv)
   RUN_WDL_VARIANT_CALLING(GENERATE_WDL_JSON.out.json, ch_cromwell_conf)
 
-  // Key join by sample id to avoid meta mismatch; ensure path() types
-  ch_all_crams_keyed = ch_all_crams.map { meta, cram, crai -> tuple(meta.id as String, [meta, file(cram), file(crai)]) }
-  ch_wdl_keyed       = RUN_WDL_VARIANT_CALLING.out.wdl_files.map { meta, vcf, contam, coverage ->
-                        tuple(meta.id as String, [meta, file(vcf), file(contam), file(coverage)]) }
+  ch_new_wdl_results = RUN_WDL_VARIANT_CALLING.out.wdl_files
+    .map { meta, vcf, ctm, cov ->
+        def out_cram = file("${params.outdir}/${meta.id}/alignment/${meta.id}.merged.cram")
+        def out_crai = file("${params.outdir}/${meta.id}/alignment/${meta.id}.merged.cram.crai")
 
-  ch_joined = ch_all_crams_keyed.join(ch_wdl_keyed).map { sid, left, right ->
-    def meta = left[0]
-    def cram = left[1]
-    def crai = left[2]
-    def vcf  = right[1]
-    def contamination = right[2]
-    def coverage = right[3]
-    tuple(meta, cram, crai, coverage, contamination)
+        def final_cram = out_cram.exists() ? out_cram : meta.cram
+        def final_crai = out_crai.exists() ? out_crai : meta.crai
+
+        if (final_cram == null) {
+            error "CRAM file for sample ${meta.id} is null. Check if 'cram' is defined in input TSV or alignment was skipped."
+        }
+
+        return tuple(meta, vcf, ctm, cov, final_cram, final_crai)
+    }
+
+  ch_all_wdl_final = ch_new_wdl_results.mix(ch_skipped_wdl_results)
+
+  ch_mtcn_inputs = ch_all_wdl_final.map { meta, vcf, ctm, cov, cram, crai ->
+      tuple(meta, cram, crai, cov)
   }
-
-  // Filter missing paths
-  ch_mtcn_inputs = ch_joined
-    .filter { meta, cram, crai, coverage, contamination -> cram && crai && coverage }
-    .map    { meta, cram, crai, coverage, contamination -> tuple(meta, file(cram), file(crai), file(coverage)) }
-
-  CALCULATE_MTCN(ch_mtcn_inputs, ch_ref_fasta_val, ch_hail_directory)
-
-  // Gate annotation by PASSed samples
-  SAMPLE_LEVEL_FILTER(CALCULATE_MTCN.out.mtcn_summary)
   
-  ch_pass_keyed = SAMPLE_LEVEL_FILTER.out.pass_signal.map { meta, _ -> tuple(meta.id as String, [meta]) }
-  ch_wdl_keyed2 = RUN_WDL_VARIANT_CALLING.out.wdl_files.map { meta, vcf, contam, coverage ->
-                    tuple(meta.id as String, [meta, file(vcf), file(contam), file(coverage)]) }
+  CALCULATE_MTCN(ch_mtcn_inputs, ch_ref_fasta_val, ch_hail_directory)
+  SAMPLE_LEVEL_FILTER(CALCULATE_MTCN.out.mtcn_summary)
 
-  ch_annotate_inputs = ch_pass_keyed.join(ch_wdl_keyed2).map { sid, left, right ->
-    def meta = left[0]
-    def vcf = right[1]
-    def contamination = right[2]
-    def coverage = right[3]
-    tuple(meta, vcf, contamination, coverage)
+  ch_wdl_all_keyed = ch_all_wdl_final.map { meta, vcf, ctm, cov, cram, crai ->
+      tuple(meta.id as String, [meta, vcf, ctm, cov]) 
   }
+
+  ch_annotate_inputs = SAMPLE_LEVEL_FILTER.out.pass_signal
+    .map { meta, ok_file -> tuple(meta.id as String, meta) } 
+    .join(ch_wdl_all_keyed)                                     
+    .map { sid, meta, wdl_data -> 
+        tuple(meta, wdl_data[1], wdl_data[2], wdl_data[3]) 
+    }
 
   ANNOTATE_INDIVIDUAL_VCF(ch_annotate_inputs, ch_hail_directory)
 }
