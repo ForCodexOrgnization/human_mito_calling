@@ -45,6 +45,11 @@ ch_input_rows = Channel
         def meta = [ id: (row[0] as String) ]
         def f1 = (row[1] as String)
         def f2 = (row.size() > 2 ? (row[2] as String) : null)
+                if (f1.endsWith('.cram')) {
+            meta.cram = file(f1)
+            meta.crai = f2 ? file(f2) : file("${f1}.crai")
+        }
+
         def ft = f1.endsWith('.fastq.gz') || f1.endsWith('.fq.gz') ? 'FASTQ'
                : f1.endsWith('.cram') ? 'CRAM'
                : f1.endsWith('.bam')  ? 'BAM'
@@ -88,9 +93,11 @@ def ch_bams   = ch_input_rows.filter { meta, ft, pairs -> ft == 'BAM'   && !meta
 ch_skipped_wdl_results = ch_input_rows
     .filter { meta, ft, pairs -> meta.wdl_done }
     .map { meta, ft, pairs ->
-      
         def input_cram = file(pairs[0][0])
-        def input_crai = file(pairs[0][1])
+        def input_crai = pairs[0][1] ? file(pairs[0][1]) : file("${pairs[0][0]}.crai")
+        
+        meta.cram = input_cram
+        meta.crai = input_crai
         
         def vcf = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.final.split.vcf")
         def ctm = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.haplocheck_contamination.txt")
@@ -612,8 +619,12 @@ workflow {
   ch_all_singles = ch_single_fastq.mix(ch_single_bam).mix(ch_single_cram)
 
   // Unified (meta, cram, crai) for downstream
-  ch_all_crams = ch_merged_results.mix(ch_all_singles)
-
+ ch_all_crams = ch_merged_results.mix(ch_all_singles)
+    .map { meta, cram, crai ->
+        meta.cram = cram
+        meta.crai = crai
+        return [ meta, cram, crai ]
+    }
   // ---------------- downstream ----------------
   GENERATE_CRAM_TSV(ch_all_crams)
   GENERATE_WDL_JSON(GENERATE_CRAM_TSV.out.tsv)
@@ -624,11 +635,11 @@ workflow {
         def out_cram = file("${params.outdir}/${meta.id}/alignment/${meta.id}.merged.cram")
         def out_crai = file("${params.outdir}/${meta.id}/alignment/${meta.id}.merged.cram.crai")
 
-        def final_cram = out_cram.exists() ? out_cram : meta.cram
-        def final_crai = out_crai.exists() ? out_crai : meta.crai
+        def final_cram = out_cram.exists() ? out_cram : (meta.cram ?: null)
+        def final_crai = out_crai.exists() ? out_crai : (meta.crai ?: null)
 
         if (final_cram == null) {
-            error "CRAM file for sample ${meta.id} is null. Check if 'cram' is defined in input TSV or alignment was skipped."
+            error "Sample ${meta.id} has no Cram file. Check if 'cram' is defined in input TSV or alignment was skipped."
         }
 
         return tuple(meta, vcf, ctm, cov, final_cram, final_crai)
