@@ -84,7 +84,6 @@ if [ "$1" == "--finalize" ]; then
             echo "[CLEANUP] Removing intermediate and temporary files..."
             [ -d "$WORK_DIR_BASE" ] && rm -rf "$WORK_DIR_BASE"
             find "${OUTPUT_DIR}" -mindepth 1 -type d -name "inputs" -exec rm -rf {} +
-            find "${OUTPUT_DIR}" -name "*.individual_entry.txt" -type f -delete
             
             # Remove high-volume raw pipeline outputs
             for pipeline_dir in "${OUTPUT_DIR}"/*/variant_calling/MitochondriaMultiSamplePipeline; do
