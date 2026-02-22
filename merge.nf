@@ -219,11 +219,7 @@ Sample_ID\tStatus\tPass_Filter\tmt_Cov\tmtCN\tContamination\tNote
         exit 1
     else
         echo -e "\n[INFO] Merging stage completed successfully." >> pipeline_summary_log.txt
-        
-        # --- NEW CLEANUP LOGIC ---
-        # Delete individual entry files only after successful merging
-        #echo "[INFO] Cleaning up individual sample files..."
-        #rm -f ${entry_files}
+
     fi
     """
 }
