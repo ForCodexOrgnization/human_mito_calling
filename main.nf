@@ -67,9 +67,9 @@ ch_input_rows = Channel
         def annotation_done = file("${params.outdir}/${meta.id}/annotation/final_outputs/variant_list.txt").exists()
         
         // CHECK 2: 
-        def vcf = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.final.split.vcf")
-        def ctm = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.haplocheck_contamination.txt")
-        def cov = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.per_base_coverage.tsv")
+        def vcf = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.final.split.vcf")
+        def ctm = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.haplocheck_contamination.txt")
+        def cov = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.per_base_coverage.tsv")
         def wdl_done = vcf.exists() && ctm.exists() && cov.exists()
 
         meta.annotation_done = annotation_done
@@ -99,9 +99,9 @@ ch_skipped_wdl_results = ch_input_rows
         meta.cram = input_cram
         meta.crai = input_crai
         
-        def vcf = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.final.split.vcf")
-        def ctm = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.haplocheck_contamination.txt")
-        def cov = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.merged.per_base_coverage.tsv")
+        def vcf = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.final.split.vcf")
+        def ctm = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.haplocheck_contamination.txt")
+        def cov = file("${params.outdir}/${meta.id}/variant_calling/${meta.id}.per_base_coverage.tsv")
         
         return tuple(meta, vcf, ctm, cov, input_cram, input_crai)
     }
@@ -319,6 +319,33 @@ process RUN_WDL_VARIANT_CALLING {
       }
   }
 EOF
+ cat > sbatch_throttle.sh <<'EOS'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PER_HOUR="\${SUBMITS_PER_HOUR:-90}"
+    (( PER_HOUR > 0 )) || PER_HOUR=90
+    MIN_GAP=\$(( 3600 / PER_HOUR ))
+    STATE_DIR="\${HOME}/.sbatch_rate"
+    LOCK_FILE="\${STATE_DIR}/lock"
+    TS_FILE="\${STATE_DIR}/last_submit.ts"
+    mkdir -p "\${STATE_DIR}"
+    exec 200>"\${LOCK_FILE}"
+    flock 200
+    now=\$(date +%s); last=0
+    [[ -f "\${TS_FILE}" ]] && read -r last < "\${TS_FILE}" || true
+    delta=\$(( now - last ))
+    if (( delta < MIN_GAP )); then
+      sleep \$(( MIN_GAP - delta ))
+    fi
+    date +%s > "\${TS_FILE}"
+    unset SLURM_CONF || true
+    exec sbatch "\$@"
+EOS
+    chmod +x sbatch_throttle.sh
+
+  export SUBMITS_PER_HOUR="${params.cromwell_submit_rate_limit ?: '90'}"
+
+  export PATH="\$PWD:\$PATH"
 
   java -Dconfig.file=${cromwell_config} -jar ${params.cromwell_jar} run ${params.wdl_script} --inputs ${wdl_inputs_json} --options cromwell_options.json
 
