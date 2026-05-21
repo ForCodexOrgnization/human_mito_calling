@@ -22,23 +22,24 @@ if ( !dir.exists() )
 
 def all_files = dir.listFiles()
 
-// Select expected inputs
-def vcf_files = all_files.findAll { it.name ==~ /.*merged\.final\.split\.vcf(\.gz)?$/ }
-def cov_files = all_files.findAll { it.name ==~ /.*merged\.per_base_coverage\.tsv(\.gz)?$/ }
+def vcf_list_raw = all_files.findAll { it.name ==~ /.*\.final\.split\.vcf(\.gz)?$/ }
+                            .collect { it.toAbsolutePath().toString() }
 
-if ( vcf_files.isEmpty() )
-    error "No merged.final.split.vcf(.gz) files found under ${params.merged_dir}"
+def cov_list_raw = all_files.findAll { it.name ==~ /.*\.per_base_coverage\.tsv(\.gz)?$/ }
+                            .collect { it.toAbsolutePath().toString() }
 
-if ( cov_files.isEmpty() )
-    error "No merged.per_base_coverage.tsv(.gz) files found under ${params.merged_dir}"
+if ( vcf_list_raw.isEmpty() ) error "No VCF files found under ${params.merged_dir}"
+if ( cov_list_raw.isEmpty() ) error "No Coverage files found under ${params.merged_dir}"
+
+ch_vcf_list_file = Channel.fromList(vcf_list_raw).collectFile(name: 'vcf_paths.txt', newLine: true)
+ch_cov_list_file = Channel.fromList(cov_list_raw).collectFile(name: 'cov_paths.txt', newLine: true)
+
+ch_vcf_all = Channel.value(vcf_list_raw)
+ch_cov_all = Channel.value(cov_list_raw)
 
 ch_summary_entries = Channel.fromPath("${params.outdir}/*/*.individual_entry.txt").collect()
-
-// Materialize channels
-ch_vcfs     = Channel.value(vcf_files)
-ch_cov_tsvs = Channel.value(cov_files)
 ch_hail_dir = Channel.fromPath(params.hail_script)
-
+ch_expected_count = Channel.value(vcf_list_raw.size())
 
 // ======================================================================
 // PROCESS 1: Convert per-base coverage TSV -> Hail Table/Matrix
@@ -49,37 +50,30 @@ process ANNOTATE_COVERAGE {
     publishDir "${params.outdir}/merged_results/coverage_mt", mode: 'copy'
 
     input:
-    path coverage_tsvs
+    path cov_list_file       
     path hail_dir
 
     output:
-    path "coverage.mt", emit: coverage_mt
-    path "coverage.ht", optional: true
-    path "coverage_files.list", emit: coverage_list
+    path "coverage.ht", emit: coverage_ht
 
     script:
     """
     set -euo pipefail
 
-    > coverage_files.list
-    for filename in ${coverage_tsvs}; do
-      [[ -f "\$filename" ]] || continue
-      sample_id=\$(basename "\$filename" | sed -E 's/(\\.final\\.split)?\\.per_base_coverage\\.tsv//')
-      echo -e "\${sample_id}\t\$(realpath "\$filename")" >> coverage_files.list
-    done
-
-    if [[ ! -s coverage_files.list ]]; then
-      echo "ERROR: coverage_files.list is empty" >&2
-      exit 2
-    fi
+    awk '{
+        n = split(\$1, a, "/"); 
+        filename = a[n]; 
+        split(filename, b, ".");
+        sample_id = b[1];
+        print sample_id "\t" \$1
+    }' ${cov_list_file} > formatted_coverage.list
 
     ${params.hail_python} ${hail_dir}/annotate_coverage.py \\
-      -i coverage_files.list \\
+      -i formatted_coverage.list \\
       -o coverage.ht \\
       --overwrite
     """
 }
-
 
 // ======================================================================
 // PROCESS 2: Combine VCFs + coverage MT -> combined MT/VCF
@@ -90,8 +84,8 @@ process COMBINE_VCFS {
   publishDir "${params.outdir}/merged_results/combined_mt", mode: 'copy'
 
   input:
-  path vcfs
-  path coverage_mt
+  path vcf_list_file
+  path coverage_ht
   path hail_dir
 
   output:
@@ -103,29 +97,22 @@ process COMBINE_VCFS {
   """
   set -euo pipefail
 
-  > vcf_files.list
-  for filename in ${vcfs}; do
-    [[ -f "\$filename" ]] || continue
-    sample_id=\$(basename "\$filename" | sed -E 's/\\.merged\\.final\\.split\\.vcf(\\.gz)?\$//')
-    abs_path=\$(realpath "\$filename" || echo "\$PWD/\$filename")
-    echo -e "\${sample_id}\t\${abs_path}" >> vcf_files.list
-  done
+  awk '{
+        n = split(\$1, a, "/"); 
+        filename = a[n]; 
+        gsub(/\\.merged\\.final\\.split\\.vcf(\\.gz)?\$/, "", filename); 
+        print filename "\t" \$1
+    }' ${vcf_list_file} > formatted_vcf.list
 
-  if [[ ! -s vcf_files.list ]]; then
-    echo "[ERROR] No VCF files collected; check file patterns." >&2
-    exit 2
-  fi
-
-  ${params.hail_python} ${hail_dir}/combine_vcfs.py \\
-    -i vcf_files.list \\
-    -c ${coverage_mt} \\
+    ${params.hail_python} ${hail_dir}/combine_vcfs.py \\
+    -i formatted_vcf.list \\
+    -c ${coverage_ht} \\
     -a ${params.wdl_inputs.blacklisted_sites} \\
     -o . \\
     --file_suffix final \\
     --overwrite
   """
 }
-
 
 // ======================================================================
 // PROCESS 3: Decompress combined VCF and run downstream annotation
@@ -135,41 +122,41 @@ process REFINE_ANNOTATION {
   label 'vep_related'
   publishDir "${params.outdir}/merged_results", mode: 'copy'
 
-  errorStrategy 'ignore'
-
   input:
-  path combined_vcf
-  path hail_dir
+  path combined_vcf           
+  path pre_list_file         
+  path hail_dir              
 
   output:
   path "annotation", emit: refined_results
 
   script:
-  // Serialize Hail/annotation configuration for the Python driver
-  def cfg = params.hail_pipeline_config ?: [:]
-  cfg.pipeline_mode = (params.pipeline_mode ?: 'population')  // 'population' | 'disease'
-  if (cfg.pipeline_mode == 'disease' && !cfg.disease_meta_file)
-      cfg.disease_meta_file = params.disease_meta_file ?: ''
-  def cfgJson = new groovy.json.JsonBuilder(cfg).toPrettyString()
-
   """
   set -euo pipefail
 
-  gunzip -c ${combined_vcf} > combined_final.vcf
-
-  cat > config.json <<'JSON'
-${cfgJson}
-JSON
-
-  rm -rf annotation
-  mkdir -p annotation
-
-  python ${hail_dir}/add_annotation_combine.py \\
-    --config config.json \\
-    --input-vcf combined_final.vcf \\
-    --outdir ./ \\
-    --overwrite
-
+  mkdir -p tmp_prefiltering
+  mkdir -p annotation/final_outputs
+  
+  CUR_DIR=\$(pwd)
+  OUT_DIR="\$CUR_DIR/annotation/final_outputs"
+  
+  echo "[*] Injecting Sample_ID via path list..."
+  tr -d '\\r' < ${pre_list_file} > cleaned_list.txt
+  
+  while read -r REAL_PATH; do
+      [ -z "\$REAL_PATH" ] && continue
+      if [ -f "\$REAL_PATH" ]; then
+          SAMPLE_NAME=\$(echo \$REAL_PATH | sed "s|${params.outdir}/||" | cut -d'/' -f1)
+  
+          awk -v sn="\$SAMPLE_NAME" 'BEGIN{FS=OFS="\\t"} {if(NR==1) print "Sample_ID", \$0; else print sn, \$0}' "\$REAL_PATH" > tmp_prefiltering/\${SAMPLE_NAME}.pre.txt
+      fi
+  done < cleaned_list.txt
+  
+  python ${hail_dir}/merge_and_calculate.py \\
+    --input-dir tmp_prefiltering \\
+    --out-dir "\$OUT_DIR" \\
+    --pipeline-mode "${params.pipeline_mode}" \\
+    --do_post_filter "${params.do_post_filter}"
   """
 }
 
@@ -203,23 +190,23 @@ Sample_ID\tStatus\tPass_Filter\tmt_Cov\tmtCN\tContamination\tNote
     # 1. Create the log file with header
     echo "${header}" > pipeline_summary_log.txt
     
-    # 2. Combine all individual entry files if they exist
-    if [ -n "${entry_files}" ]; then
-        cat ${entry_files} | sort >> pipeline_summary_log.txt
+    printf "%s\\n" ${entry_files} > file_list.tmp
+    
+    if [ -s file_list.tmp ]; then
+        xargs -a file_list.tmp cat | sort >> pipeline_summary_log.txt
     fi
 
     EXPECTED_COUNT=${expected_count}
-    ACTUAL_COUNT=\$(ls *.individual_entry.txt | wc -l)
+    ACTUAL_COUNT=\$(cat file_list.tmp | wc -l)
 
-    # 3. Final check and cleanup
+    # 4. Final check and cleanup
     if [ "${status}" == "FAILED" ] || [ "\$ACTUAL_COUNT" -lt "\$EXPECTED_COUNT" ]; then
-        echo -e "\n[ERROR] THE MERGE STAGE FAILED OR SAMPLES MISSING." >> pipeline_summary_log.txt
+        echo -e "\\n[ERROR] THE MERGE STAGE FAILED OR SAMPLES MISSING." >> pipeline_summary_log.txt
         echo -e "[ERROR] Expected: \$EXPECTED_COUNT, Found: \$ACTUAL_COUNT" >> pipeline_summary_log.txt
         echo "Error: Stage 2 refinement failed." >&2
         exit 1
     else
-        echo -e "\n[INFO] Merging stage completed successfully." >> pipeline_summary_log.txt
-
+        echo -e "\\n[INFO] Merging stage completed successfully." >> pipeline_summary_log.txt
     fi
     """
 }
@@ -228,16 +215,26 @@ Sample_ID\tStatus\tPass_Filter\tmt_Cov\tmtCN\tContamination\tNote
 // WORKFLOW
 // ======================================================================
 workflow FINALIZER {
-  ANNOTATE_COVERAGE(ch_cov_tsvs, ch_hail_dir)
-  COMBINE_VCFS(ch_vcfs, ANNOTATE_COVERAGE.out.coverage_mt, ch_hail_dir)
-  REFINE_ANNOTATION(COMBINE_VCFS.out.combined_vcf, ch_hail_dir)
+    ANNOTATE_COVERAGE(ch_cov_list_file, ch_hail_dir)
+    
+    COMBINE_VCFS(ch_vcf_list_file, ANNOTATE_COVERAGE.out.coverage_ht, ch_hail_dir)
+    
+    ch_per_sample_pre_list = Channel.fromPath("${params.outdir}/*/annotation/final_outputs/variant_list_prefiltering.txt")
+        .map { it.toAbsolutePath().toString() } 
+        .collectFile(name: 'prefiltering_list.txt', newLine: true, sort: true)
 
-  ch_expected_count = ch_vcfs.map { list -> list.size()}
-  ch_combine_status = REFINE_ANNOTATION.out.refined_results
-        .map { "SUCCESS" }
-        .ifEmpty("FAILED")
+    REFINE_ANNOTATION(COMBINE_VCFS.out.combined_vcf, ch_per_sample_pre_list, ch_hail_dir)
 
-  COMBINE_SUMMARY_LOGS(ch_summary_entries, ch_combine_status, ch_expected_count)
+    ch_combine_status = REFINE_ANNOTATION.out.refined_results
+    .collect()
+    .map { "SUCCESS" }
+    .ifEmpty("FAILED")
+
+    COMBINE_SUMMARY_LOGS(
+    ch_summary_entries, 
+    ch_combine_status, 
+    ch_expected_count
+)
 }
 
 workflow { FINALIZER() }

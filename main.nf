@@ -86,9 +86,9 @@ ch_input_rows = Channel
         return true 
     }
 
-def ch_fastqs = ch_input_rows.filter { meta, ft, pairs -> ft == 'FASTQ' && !meta.wdl_done }
-def ch_crams  = ch_input_rows.filter { meta, ft, pairs -> ft == 'CRAM'  && !meta.wdl_done }
-def ch_bams   = ch_input_rows.filter { meta, ft, pairs -> ft == 'BAM'   && !meta.wdl_done }
+def ch_fastqs = ch_input_rows.filter { meta, ft, pairs -> ft == 'FASTQ' }
+def ch_crams  = ch_input_rows.filter { meta, ft, pairs -> ft == 'CRAM'  }
+def ch_bams   = ch_input_rows.filter { meta, ft, pairs -> ft == 'BAM'   }
 
 ch_skipped_wdl_results = ch_input_rows
     .filter { meta, ft, pairs -> meta.wdl_done }
@@ -287,6 +287,8 @@ process GENERATE_WDL_JSON {
 process RUN_WDL_VARIANT_CALLING {
   tag "Variant Calling ${meta.id}"
   label 'wdl_related'
+ 
+  maxForks 3
 
   input:
   tuple val(meta), path(wdl_inputs_json)
@@ -305,6 +307,24 @@ process RUN_WDL_VARIANT_CALLING {
   #!/usr/bin/env bash
   set -euo pipefail
 
+  # --- Dynamically monitoring ---
+  MAX_ALLOWED_JOBS=120
+  CHECK_INTERVAL=30
+  echo "[INFO] Monitoring cluster load for user \${USER}..."
+
+  while true; do
+      CURRENT_COUNT=\$(squeue -u \${USER} -h -t all | wc -l)
+      
+      if (( CURRENT_COUNT < MAX_ALLOWED_JOBS )); then
+          echo "[OK] Cluster load is \${CURRENT_COUNT}. Proceeding with ${meta.id}..."
+          break
+      else
+          echo "[WAIT] High load (\${CURRENT_COUNT} jobs). Limit is \${MAX_ALLOWED_JOBS}. Sleeping \${CHECK_INTERVAL}s..."
+          sleep \${CHECK_INTERVAL}
+      fi
+  done
+  # ---------------------------------------------
+
   TARGET_DIR="${params.outdir}/${meta.id}/variant_calling"
   mkdir -p "\${TARGET_DIR}"
 
@@ -322,8 +342,7 @@ EOF
  cat > sbatch_throttle.sh <<'EOS'
     #!/usr/bin/env bash
     set -euo pipefail
-    PER_HOUR="\${SUBMITS_PER_HOUR:-90}"
-    (( PER_HOUR > 0 )) || PER_HOUR=90
+    PER_HOUR=50
     MIN_GAP=\$(( 3600 / PER_HOUR ))
     STATE_DIR="\${HOME}/.sbatch_rate"
     LOCK_FILE="\${STATE_DIR}/lock"
@@ -342,8 +361,6 @@ EOF
     exec sbatch "\$@"
 EOS
     chmod +x sbatch_throttle.sh
-
-  export SUBMITS_PER_HOUR="${params.cromwell_submit_rate_limit ?: '90'}"
 
   export PATH="\$PWD:\$PATH"
 
@@ -421,7 +438,7 @@ process CALCULATE_MTCN {
   publishDir "${params.outdir}/${meta.id}/mtCN", mode: 'copy'
 
   input:
-  tuple val(meta), path(cram), path(crai), path(mt_coverage)
+  tuple val(meta), path(cram), path(crai), path(mt_coverage), path(haplocheck_file)
   path ref_fasta
   path hail_dir
 
@@ -445,6 +462,7 @@ process CALCULATE_MTCN {
       --crai "\${CRAI_ABS}" \\
       --ref_fasta "\${REF_ABS}" \\
       --mt_coverage "\${MT_COV_ABS}" \\
+      --haplocheck ${haplocheck_file} \\
       --output mtcn_out \\
       --mosdepth ${params.mosdepth} \\
       --min_mt_cov ${params.min_mt_cov ?: 100} \\
@@ -475,42 +493,42 @@ process SAMPLE_LEVEL_FILTER {
   #!/usr/bin/env bash
   set -euo pipefail
 
-  # 使用原生 Python 提高兼容性，提取数值和 Pass 状态
   results=\$(python - "${mtcn_summary}" <<'PY'
-import sys, re
+import sys
 
 try:
-    with open(sys.argv[1], 'r') as f:
+    summary_path = sys.argv[1]
+    with open(summary_path, 'r') as f:
         lines = [line.strip() for line in f if line.strip()]
+        if len(lines) < 2:
+            raise ValueError("Summary file is empty or missing data row.")
+            
         header = lines[0].split('\t')
         data = lines[1].split('\t')
-        
-        # 将列名存入字典方便查找
         res_dict = dict(zip(header, data))
         
-        # 匹配 calculate_mtcn.py 的原始列名
         mt_cov = res_dict.get('Mean_mtDNA_Coverage', 'N/A')
-        mtcn = res_dict.get('mtCN_final', 'N/A')
-        contam = res_dict.get('Contamination', 'N/A')
-        # 兼容 True/TRUE/pass 等写法
-        pass_val = "TRUE" if res_dict.get('Pass_Filter', 'False').lower() in ['true', 'pass', '1'] else "FALSE"
+        mtcn   = res_dict.get('mtCN_final', 'N/A')
+        contam_status = res_dict.get('Contamination', 'NO').upper()
         
-        print(f"{pass_val}|{mt_cov}|{mtcn}|{contam}")
+        orig_pass = res_dict.get('Pass_Filter', 'False').lower() in ['true', 'pass', '1']
+        
+        final_pass = "TRUE" if (orig_pass and contam_status != "YES") else "FALSE"
+        
+        print(f"{final_pass}|{mt_cov}|{mtcn}|{contam_status}")
 except Exception as e:
-    sys.stderr.write(str(e))
+    sys.stderr.write(f"Python Error: {str(e)}\\n")
     print("ERROR|N/A|N/A|N/A")
 PY
 )
 
-  # 解析 Python 输出
   IFS='|' read -r PASS_FLAG COV MTCN CONTAM <<< "\${results}"
 
-  # 写入临时日志条目 (修正2：确保文件名与 output 部分定义的一致)
   if [[ "\${PASS_FLAG}" == "TRUE" ]]; then
-    echo -e "${meta.id}\tSUCCESS\t\${PASS_FLAG}\t\${COV}\t\${MTCN}\t\${CONTAM}\tQC Done" > "${meta.id}.individual_entry.txt"
+    echo -e "${meta.id}\tSUCCESS\tTRUE\t\${COV}\t\${MTCN}\t\${CONTAM}\tQC Pass" > "${meta.id}.individual_entry.txt"
     touch .pass.ok
   else
-    echo -e "${meta.id}\tSUCCESS\tFALSE\t\${COV}\t\${MTCN}\t\${CONTAM}\tQC Failed" > "${meta.id}.individual_entry.txt"
+    echo -e "${meta.id}\tSUCCESS\tFALSE\t\${COV}\t\${MTCN}\t\${CONTAM}\tQC Failed or Contaminated" > "${meta.id}.individual_entry.txt"
   fi
   """
 }
@@ -526,7 +544,7 @@ process ANNOTATE_INDIVIDUAL_VCF {
   path hail_dir
 
   output:
-  tuple val(meta), path("annotation/**"), path(".annotate_complete"), emit: annotated_results
+  tuple val(meta), path("annotation/final_outputs/variant_list_prefiltering.txt"), emit: prefilter_out
 
   script:
   def cfg = new JsonBuilder( params.hail_pipeline_config ).toPrettyString()
@@ -551,13 +569,13 @@ process ANNOTATE_INDIVIDUAL_VCF {
 
   python ${hail_dir}/add_annotation_single.py --config config.json
 
-  FINAL_OUTPUT_FILE="annotation/final_outputs/variant_list.txt" 
+  FINAL_OUTPUT_FILE="annotation/final_outputs/variant_list_prefiltering.txt" 
+  
   if [[ -s "\${FINAL_OUTPUT_FILE}" ]]; then
     echo "[SUCCESS] Annotation OK for ${meta.id} -> \${FINAL_OUTPUT_FILE}"
     touch .annotate_complete
   else
     echo "ERROR: Expected final output '\${FINAL_OUTPUT_FILE}' not found or empty." >&2
-    ls -R annotation >&2 || true
     exit 1
   fi
   """
@@ -647,52 +665,102 @@ workflow {
 
   // Unified (meta, cram, crai) for downstream
  ch_all_crams = ch_merged_results.mix(ch_all_singles)
-    .map { meta, cram, crai ->
-        meta.cram = cram
-        meta.crai = crai
-        return [ meta, cram, crai ]
-    }
-  // ---------------- downstream ----------------
-  GENERATE_CRAM_TSV(ch_all_crams)
-  GENERATE_WDL_JSON(GENERATE_CRAM_TSV.out.tsv)
-  RUN_WDL_VARIANT_CALLING(GENERATE_WDL_JSON.out.json, ch_cromwell_conf)
 
-  ch_new_wdl_results = RUN_WDL_VARIANT_CALLING.out.wdl_files
-    .map { meta, vcf, ctm, cov ->
-        def out_cram = file("${params.outdir}/${meta.id}/alignment/${meta.id}.merged.cram")
-        def out_crai = file("${params.outdir}/${meta.id}/alignment/${meta.id}.merged.cram.crai")
-
-        def final_cram = out_cram.exists() ? out_cram : (meta.cram ?: null)
-        def final_crai = out_crai.exists() ? out_crai : (meta.crai ?: null)
-
-        if (final_cram == null) {
-            error "Sample ${meta.id} has no Cram file. Check if 'cram' is defined in input TSV or alignment was skipped."
+    // 1. WDL 门控逻辑
+    ch_wdl_gate = ch_all_crams
+        .map { meta, cram, crai ->
+            def out_base = new File(params.outdir).absolutePath
+            def dir = new File("${out_base}/${meta.id}/variant_calling")
+            def files = (dir.exists() ? dir.listFiles() : null)
+            def vcfP = files?.find { it.isFile() && it.name.endsWith(".final.split.vcf") }?.toString()
+            def ctmP = files?.find { it.isFile() && it.name.endsWith(".haplocheck_contamination.txt") }?.toString()
+            def covP = files?.find { it.isFile() && it.name.endsWith(".per_base_coverage.tsv") }?.toString()
+            def wdl_exists = (vcfP && ctmP && covP)
+            
+            def updated_meta = meta + [wdl_exists: wdl_exists, vcf_path: vcfP, ctm_path: ctmP, cov_path: covP]
+            return [updated_meta, cram, crai]
+        }
+        .branch {
+            to_run: !it[0].wdl_exists
+            exists:  it[0].wdl_exists
         }
 
-        return tuple(meta, vcf, ctm, cov, final_cram, final_crai)
+    // 准备 WDL 运行
+    GENERATE_CRAM_TSV(ch_wdl_gate.to_run)
+    GENERATE_WDL_JSON(GENERATE_CRAM_TSV.out.tsv)
+    RUN_WDL_VARIANT_CALLING(GENERATE_WDL_JSON.out.json, ch_cromwell_conf)
+
+    // 汇合 WDL 结果 (使用 .mix 产生 Queue Channel)
+    ch_existing_wdl = ch_wdl_gate.exists.map { m, cr, ci -> 
+        [ m, file(m.vcf_path), file(m.ctm_path), file(m.cov_path) ] 
+    }
+    
+    // 重要：使用 .broadcast() 解决多下游消费问题
+  ch_wdl_combined = RUN_WDL_VARIANT_CALLING.out.wdl_files
+        .mix(ch_existing_wdl)
+        .multiMap { meta, vcf, ctm, cov ->
+            for_mtcn: [ meta, vcf, ctm, cov ]
+            for_ann:  [ meta, vcf, ctm, cov ]
+        }
+
+    // 2. mtCN 准备 (消费 ch_wdl_split.for_mtcn)
+    // 2. mtCN 准备
+    ch_mtcn_prep = ch_wdl_combined.for_mtcn.map { meta, vcf, ctm, cov ->
+        def out_base = new File(params.outdir).absolutePath
+        def mtcn_summary = new File("${out_base}/${meta.id}/mtCN/mtCN_summary.txt")
+        def has_mtcn = mtcn_summary.exists() && mtcn_summary.length() > 0
+        
+        // 健壮性检查：如果 output 目录没文件，尝试从 meta 中取原始路径
+        def out_cram_file = file("${params.outdir}/${meta.id}/alignment/${meta.id}.merged.cram")
+        def out_crai_file = file("${params.outdir}/${meta.id}/alignment/${meta.id}.merged.crai")
+        
+        def final_cram = out_cram_file.exists() ? out_cram_file : file(meta.cram)
+        def final_crai = out_crai_file.exists() ? out_crai_file : file(meta.crai)
+        
+        // 返回 5 个元素的元组：meta, cram, crai, cov, ctm
+        return [ meta + [mtcn_done: has_mtcn], final_cram, final_crai, cov, ctm ]
     }
 
-  ch_all_wdl_final = ch_new_wdl_results.mix(ch_skipped_wdl_results)
-
-  ch_mtcn_inputs = ch_all_wdl_final.map { meta, vcf, ctm, cov, cram, crai ->
-      tuple(meta, cram, crai, cov)
-  }
-  
-  CALCULATE_MTCN(ch_mtcn_inputs, ch_ref_fasta_val, ch_hail_directory)
-  SAMPLE_LEVEL_FILTER(CALCULATE_MTCN.out.mtcn_summary)
-
-  ch_wdl_all_keyed = ch_all_wdl_final.map { meta, vcf, ctm, cov, cram, crai ->
-      tuple(meta.id as String, [meta, vcf, ctm, cov]) 
-  }
-
-  ch_annotate_inputs = SAMPLE_LEVEL_FILTER.out.pass_signal
-    .map { meta, ok_file -> tuple(meta.id as String, meta) } 
-    .join(ch_wdl_all_keyed)                                     
-    .map { sid, meta, wdl_data -> 
-        tuple(meta, wdl_data[1], wdl_data[2], wdl_data[3]) 
+    // 修复点：显式为 ch_mtcn_split 赋值
+    ch_mtcn_split = ch_mtcn_prep.branch {
+        to_run: !it[0].mtcn_done
+        exists: it[0].mtcn_done
     }
 
-  ANNOTATE_INDIVIDUAL_VCF(ch_annotate_inputs, ch_hail_directory)
+    // 运行计算
+    def ch_to_calculate = ch_mtcn_split.to_run
+    CALCULATE_MTCN(ch_to_calculate, ch_ref_fasta_val, ch_hail_directory)
+
+    // 3. 统一 mtCN 结果输出 (确保 downstream 拿到的是计算产出的 Path 对象)
+    ch_existing_mtcn = ch_mtcn_split.exists.map { m, cr, ci, cov, ctm -> 
+    [ m, file("${params.outdir}/${m.id}/mtCN/mtCN_summary.txt") ] 
+}
+    
+    // 关键：这里直接消费 CALCULATE_MTCN.out，保证了 Fresh Run 时的线性依赖
+    ch_all_mtcn_results = CALCULATE_MTCN.out.mtcn_summary
+        .mix(ch_existing_mtcn)
+
+    // 4. 运行 QC 过滤
+    SAMPLE_LEVEL_FILTER(ch_all_mtcn_results)
+
+    // 5. 最终汇合 (使用 ID 作为 Key 进行 join)
+    // 5. 最终汇合
+    ch_qc_pass = SAMPLE_LEVEL_FILTER.out.pass_signal
+        .map { meta, ok -> [ meta.id.toString(), meta ] }
+
+    // 使用 multiMap 的 for_ann 分支
+    ch_wdl_for_ann = ch_wdl_combined.for_ann
+        .map { meta, vcf, ctm, cov -> [ meta.id.toString(), vcf, ctm, cov ] }
+
+    ch_annotate_inputs = ch_qc_pass
+        .join(ch_wdl_for_ann)
+        .map { sid, meta, vcf, ctm, cov ->
+            log.info "[PROCESS] Starting Annotation for Sample: ${sid}"
+            return [ meta, vcf, ctm, cov ]
+        }
+
+    // 6. 运行最终步骤
+    ANNOTATE_INDIVIDUAL_VCF(ch_annotate_inputs, ch_hail_directory)
 }
 
 // ======================================================================
