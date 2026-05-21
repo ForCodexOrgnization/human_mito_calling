@@ -107,14 +107,29 @@ def main(args):
     mtcn_final = 2 * mt_mean / nuc_median if (nuc_median > 0) else np.nan
 
     contam = 0.0  # Placeholder for contamination estimation (if implemented later)
+    is_contaminated_str = "NO"
 
     # Apply QC filtering logic
+
+    if hasattr(args, 'haplocheck') and args.haplocheck and os.path.exists(args.haplocheck):
+        try:
+            h_df = pd.read_csv(args.haplocheck, sep="\t")
+            if 'Contamination' in h_df.columns:
+                is_contaminated_str = str(h_df['Contamination'].values[0]).upper()
+                
+                if is_contaminated_str == "YES":
+                    contam = 1.0  
+                else:
+                    contam = 0.0
+        except Exception as e:
+            print(f"[WARN] Failed to parse haplocheck file: {e}")
 
     pass_filter = (
         (mt_mean >= args.min_mt_cov)
         and (np.isfinite(mtcn_final))
         and (args.min_mtcn <= mtcn_final <= args.max_mtcn)
         and (contam <= args.max_contam)
+        and (is_contaminated_str != "YES")
     )
 
     # 4. Summarize records
@@ -125,7 +140,7 @@ def main(args):
         "Mean_Nuclear_Coverage": round(nuc_mean, 2),
         "Median_Nuclear_Coverage": round(nuc_median, 2),
         "mtCN_final": round(mtcn_final, 2),
-        "Contamination": round(contam, 2),
+        "Contamination": is_contaminated_str,
         "Pass_Filter": pass_filter
     }
 
@@ -144,12 +159,14 @@ if __name__ == "__main__":
     parser.add_argument("--mt_coverage", required=True, help="Mitochondrial per-base coverage TSV")
     parser.add_argument("--output", required=True, help="Output directory")
     parser.add_argument("--mosdepth", required=True, help="Path to mosdepth executable")
+    parser.add_argument("--haplocheck", help="Haplocheck contamination file (optional)")
     
     # Optional QC parameters
     parser.add_argument("--min_mt_cov", type=int, default=100, help="Minimum mtDNA coverage threshold")
     parser.add_argument("--min_mtcn", type=float, default=50, help="Minimum mtCN threshold")
     parser.add_argument("--max_mtcn", type=float, default=500, help="Maximum mtCN threshold")
     parser.add_argument("--max_contam", type=float, default=0.02, help="Maximum contamination allowed.")
+
 
     args = parser.parse_args()
     main(args)

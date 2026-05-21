@@ -19,7 +19,7 @@ REQ_KEYS = [
     "vep_cache_dir", "pipeline_mode",
     "gnomadcache", "clinvarcache",
     "mitomap_polycache", "mitomap_diseasecache",
-    "helixcache",
+    "helixcache","fullhaplogroups", "haplogroup_varcache",
     "mitimpactcache", "mitotipcache", "hmtvarcache",
     "napogeecache", "tapogeecache", "mlc_snv_cache", "mlc_indel_cache", "regional_constraint_cache"
 ]
@@ -207,6 +207,8 @@ def main():
         "--mitotipcache",        cfg["mitotipcache"],
         "--hmtvarcache",         cfg["hmtvarcache"],
         # NEW caches
+        "--fullhaplogroups",    cfg["fullhaplogroups"],
+        "--haplovarcache",      cfg["haplogroup_varcache"],
         "--napogeecache",        cfg["napogeecache"],
         "--tapogeecache",        cfg["tapogeecache"],
         "--mlc_snv_cache",       cfg["mlc_snv_cache"],

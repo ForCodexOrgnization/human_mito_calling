@@ -216,27 +216,36 @@ def remove_FT_values(mt: hl.MatrixTable, filters_to_remove: list = ['possible_nu
 def determine_hom_refs(
     mt: hl.MatrixTable, coverage_mt_path: str, minimum_homref_coverage: int = 100
 ) -> hl.MatrixTable:
-    """Uses coverage to distinguish between homref and missing sites, outputs the resulting mt
-
-    :param hl.MatrixTable mt: MatrixTable to use an input
-    :param str coverage_mt_path: MatrixTable of sample level coverage at each position
-    :param int minimum_homref_coverage: minimum depth of coverage required to call a genotype homoplasmic reference rather than missing
-
-    :return: MatrixTable with missing genotypes converted to homref depending on coverage
-    :rtype: hl.MatrixTable
-    """
-
-    # convert coverage to build GRCh38
-    # note: the mitochondrial reference genome is the same for GRCh38 and GRCh38
-    coverages = hl.read_matrix_table(coverage_mt_path)
-    coverages = coverages.key_rows_by(
+    """针对大样本优化的深度补全函数"""
+    logger.info(f"Loading coverage from: {coverage_mt_path}")
+    
+    # 1. 自动识别输入格式 (HT 或 MT) 并加载
+    if coverage_mt_path.endswith(".ht"):
+        coverages = hl.read_table(coverage_mt_path)
+    else:
+        # 如果传入的是 MatrixTable，取其 rows 以确保 Join 性能
+        coverages = hl.read_matrix_table(coverage_mt_path).rows()
+    
+    # 2. 统一 Key 为 locus，确保基因组版本为 GRCh38
+    coverages = coverages.key_by(
         locus=hl.locus("chrM", coverages.locus.position, reference_genome="GRCh38")
     )
 
+    # 3. 性能优化：使用 Left Join (annotate_entries) 替代中括号索引查找
+    # 使用 'mean' 字段 (来自 annotate_coverage.py 聚合结果)
+    # 对于 VCF 中缺失的条目，用该位点的群体平均深度补齐 DP
+    mt = mt.annotate_entries(_site_mean_dp = coverages[mt.locus].mean)
+
     mt = mt.annotate_entries(
-        DP=hl.if_else(hl.is_missing(mt.HL), coverages[mt.locus, mt.s].coverage, mt.DP)
+        DP=hl.if_else(
+            hl.is_missing(mt.HL), 
+            hl.int32(hl.coalesce(mt._site_mean_dp, 0)), # 如果均值也缺失则补0
+            mt.DP
+        )
     )
 
+    # 4. 判定同质型参考 (Hom-Ref) 逻辑
+    # 如果 HL 缺失且深度达标，则认为该样本在该位点是 Hom-Ref (HL=0.0)
     hom_ref_expr = hl.is_missing(mt.HL) & (mt.DP > minimum_homref_coverage)
 
     mt = mt.annotate_entries(
@@ -249,7 +258,7 @@ def determine_hom_refs(
         ),
     )
 
-    return mt
+    return mt.drop("_site_mean_dp")
 
 
 def apply_mito_artifact_filter(

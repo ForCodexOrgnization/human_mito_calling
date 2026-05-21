@@ -168,6 +168,9 @@ def step3_run_variant_processor(config):
         "--mlc_snv_cache",      config["mlc_snv_cache"],
         "--mlc_indel_cache",    config["mlc_indel_cache"],
         "--regional_constraint_cache", config["regional_constraint_cache"],
+        "--min-vaf",            str(config["vaf_filter_threshold"]), 
+        "--min-dp",             str(config["min_DP"]),
+        "--post_filtering",     str(config["post_filtering"]),
     ]
 
     # ---- OPTIONAL disease meta ----

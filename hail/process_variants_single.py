@@ -16,7 +16,6 @@ def load_complex_db(path, key_cols, val_cols, delimiter: str = "\t") -> dict:
     """Load a tabular annotation file as a dict keyed by multiple columns."""
     # 增加 encoding='ISO-8859-1' 解决 UnicodeDecodeError
     df = pd.read_csv(path, sep=delimiter, low_memory=False, dtype=str, comment="#", encoding='ISO-8859-1')
-    # 清洗列名，去除不可见空格
     df.columns = [c.strip() for c in df.columns]
     
     idx = pd.MultiIndex.from_frame(df[key_cols])
@@ -26,11 +25,9 @@ def load_complex_db(path, key_cols, val_cols, delimiter: str = "\t") -> dict:
 
 def load_simple_val_db(path, key_cols, val_col, delimiter: str = "\t") -> dict:
     """Load a tabular file as a dict returning a single value."""
-    # 增加 encoding='ISO-8859-1' 并清洗列名
     df = pd.read_csv(path, sep=delimiter, low_memory=False, dtype=str, comment="#", encoding='ISO-8859-1')
     df.columns = [c.strip() for c in df.columns]
     
-    # 校验列是否存在，打印友好报错
     missing = [c for c in key_cols + [val_col] if c not in df.columns]
     if missing:
         print(f"ERROR: Missing columns {missing} in {path}")
@@ -42,7 +39,6 @@ def load_simple_val_db(path, key_cols, val_col, delimiter: str = "\t") -> dict:
 
 
 def load_pos_only_db(path, pos_col, val_col, delimiter: str = "\t") -> dict:
-    """专门为 MLC Indel 设计：仅根据位置加载评分字典"""
     df = pd.read_csv(path, sep=delimiter, low_memory=False, dtype=str, comment="#", encoding='ISO-8859-1')
     df.columns = df.columns.str.strip()
     return pd.Series(df[val_col].values, index=df[pos_col]).to_dict()
@@ -54,6 +50,10 @@ def load_pos_only_db(path, pos_col, val_col, delimiter: str = "\t") -> dict:
 
 def process_and_filter_variants(args) -> None:
     print("\n--- Starting single-sample variant processing ---")
+
+    min_vaf = float(args.min_vaf) if args.min_vaf else 0.01
+    min_dp = float(args.min_dp) if args.min_dp else 100
+    do_post_filter = str(args.post_filtering).lower() == "true"
 
     # ---- metadata (haplogroup, contamination) ----
     hap_dict = pd.read_csv(
@@ -149,18 +149,25 @@ def process_and_filter_variants(args) -> None:
     # ClinVar
     clin = pd.read_csv(args.clinvarcache, sep="\t", dtype=str, encoding='ISO-8859-1')
     clin.columns = [c.strip() for c in clin.columns]
+    
+    gene_col = "Gene(s)" if "Gene(s)" in clin.columns else "Gene"
+    
     clin["pos"] = clin["GRCh38Location"]
     spdi = clin["Canonical SPDI"].str.split(":", expand=True)
     clin["ref"], clin["alt"] = spdi[2], spdi[3]
+    
+    clin[gene_col] = clin[gene_col].fillna("").str.strip()
+
     clin = clin[
         (clin["ref"].str.len() == 1) &
         (clin["alt"].str.len() == 1) &
         (clin["ref"] != clin["alt"]) &
         (clin["Germline classification"] != "Conflicting interpretations of pathogenicity")
     ].copy()
+
     clinvar_db = pd.Series(
         clin["Germline classification"].values,
-        index=pd.MultiIndex.from_frame(clin[["ref", "pos", "alt"]])
+        index=pd.MultiIndex.from_frame(clin[["ref", "pos", "alt", gene_col]])
     ).to_dict()
 
     # ---- read one VEP VCF ----
@@ -202,15 +209,50 @@ def process_and_filter_variants(args) -> None:
         vcf[c] = fmt[c]
     vcf["Heteroplasmy"] = pd.to_numeric(vcf["AF"], errors="coerce")
     vcf["DP"] = pd.to_numeric(vcf["DP"], errors="coerce")
+    vcf = vcf[
+        (vcf["Heteroplasmy"].fillna(0) >= min_vaf) & 
+        (vcf["DP"].fillna(0) >= min_dp)
+    ].copy()
+    
+    if vcf.empty:
+        print(f"[!] No variants passed the hard filters (VAF >= {min_vaf}, DP >= {min_dp}).")
+        return
+    
+    artifact_sites = ["301", "302", "310", "316", "3107", "16182"]
+    vcf["is_artifact_prone"] = vcf["POS"].astype(str).isin(artifact_sites)
 
-    def extract_csq(info_str):
+    print("[*] Calculating indel_stack metrics...")
+    
+    vcf["is_indel"] = vcf["REF"].str.len() != vcf["ALT"].str.len()
+    
+    unique_indels = vcf[vcf["is_indel"]][["POS", "ALT"]].drop_duplicates()
+    pos_indel_counts = unique_indels.groupby("POS")["ALT"].nunique()
+    
+    stack_positions = pos_indel_counts[pos_indel_counts >= 2].index.tolist()
+    
+    vcf["indel_stack"] = vcf["is_indel"] & vcf["POS"].isin(stack_positions)
+    
+    def update_filter_str(row):
+        current_filter = str(row["FILTER"])
+        if row["indel_stack"]:
+            if current_filter == "PASS" or current_filter == ".":
+                return "indel_stack"
+            else:
+                return current_filter + ";indel_stack"
+        return current_filter
+
+    vcf["FILTER"] = vcf.apply(update_filter_str, axis=1)
+
+    def extract_csq_list(info_str):
         for segment in info_str.split(";"):
             if segment.startswith("CSQ="):
-                return segment[4:]
-        return ""
+                return segment[4:].split(",")
+        return [""]
 
-    vcf["CSQ_STRING"] = vcf["INFO"].apply(extract_csq)
+    vcf["CSQ_LIST"] = vcf["INFO"].apply(extract_csq_list)
     
+    vcf = vcf.explode("CSQ_LIST").reset_index(drop=True)
+
     info_cols = [
         "Allele", "Consequence", "IMPACT", "SYMBOL", "Gene", "Feature_type",
         "Feature", "BIOTYPE", "EXON", "INTRON", "HGVSc", "HGVSp",
@@ -219,14 +261,14 @@ def process_and_filter_variants(args) -> None:
         "VARIANT_CLASS", "SYMBOL_SOURCE", "HGNC_ID", "HGVS_OFFSET",
     ]
     
-    vep_split = vcf["CSQ_STRING"].str.split("|", expand=True)
+    vep_split = vcf["CSQ_LIST"].str.split("|", expand=True)
     vep_start = 0 
     take = min(len(info_cols), max(0, vep_split.shape[1] - vep_start))
     
     if take > 0:
         vcf[info_cols[:take]] = vep_split.iloc[:, vep_start: vep_start + take]
 
-    vcf.drop(columns=["CSQ_STRING"], inplace=True)
+    vcf.drop(columns=["CSQ_LIST"], inplace=True)
 
     vcf["SAMPLE_ID"] = sample_col
     vcf["Haplogroup"] = vcf["SAMPLE_ID"].map(hap_dict)
@@ -333,7 +375,7 @@ def process_and_filter_variants(args) -> None:
         "SAMPLE_ID", "CHROM", "POS", "REF", "ALT", "FILTER",
         "GT", "AD", "Heteroplasmy", "DP",
         "Consequence", "SYMBOL", "BIOTYPE", "HGVSc", "HGVSp",
-        "Codons", "VARIANT_CLASS",
+        "Codons", "VARIANT_CLASS", "indel_stack","is_artifact_prone",
         "Haplogroup", "Haplogroup_Var_Status",
         "gnomad_max_hl", "gnomad_af_hom", "gnomad_af_het",
         "apogee_class", "mitotip_class", "hmtvar_class",
@@ -349,32 +391,35 @@ def process_and_filter_variants(args) -> None:
 
     os.makedirs(args.final_output_dir, exist_ok=True)
 
+    prefilter_mask = (vcf["FILTER"].isin(["PASS", ".", ""])) & (~vcf["indel_stack"])
+    vcf_pre = vcf[prefilter_mask].copy()
+
+    os.makedirs(args.final_output_dir, exist_ok=True)
     pre_path = os.path.join(args.final_output_dir, "variant_list_prefiltering.txt")
-    vcf[final_cols].to_csv(pre_path, sep="\t", index=False, na_rep="")
-    print(f"[+] Prefiltering table saved to: {pre_path}")
+    
+    vcf_pre[final_cols].to_csv(pre_path, sep="\t", index=False, na_rep="")
+    print(f"[+] Prefiltering table (PASS only) saved to: {pre_path}")
 
-    clinvar_junk_pos = ["73", "263", "16159", "16182", "16183", "16223"]
+    if do_post_filter:
+        filtered = vcf[
+            (vcf["gnomad_af_hom"] < 0.01) &
+            (vcf["helix_af_hom"]  < 0.01) &
+            (vcf["mitomap_af"]    < 0.01) &
+            (vcf["Consequence"]   != "synonymous_variant") &
+            (vcf["Heteroplasmy"].fillna(0) > 0.05) &
+            (~vcf["clinvar_interp"].isin(["Benign", "Likely benign", "Affects"])) &
+            (vcf["Haplogroup_Var_Status"] != "haplo_var_match")
+        ].copy()
 
-    filtered = vcf[
-        (vcf["gnomad_af_hom"] < 0.01) &
-        (vcf["helix_af_hom"]  < 0.01) &
-        (vcf["mitomap_af"]    < 0.01) &
-        (vcf["Consequence"]   != "synonymous_variant") &
-        (vcf["Heteroplasmy"].fillna(0) > 0.05) &
-        (~vcf["clinvar_interp"].isin(["Benign", "Likely benign", "Affects"])) &
-        (~vcf["POS"].isin(clinvar_junk_pos)) &
-        (vcf["Haplogroup_Var_Status"] != "haplo_var_match")
-    ].copy()
+        filtered = filtered.sort_values(
+            by=["gnomad_af_hom", "helix_af_hom", "mitomap_af"],
+            ascending=[True, True, True],
+            na_position="last"
+        )
 
-    filtered = filtered.sort_values(
-        by=["gnomad_af_hom", "helix_af_hom", "mitomap_af"],
-        ascending=[True, True, True],
-        na_position="last"
-    )
-
-    out_path = os.path.join(args.final_output_dir, "variant_list.txt")
-    filtered[final_cols].to_csv(out_path, sep="\t", index=False, na_rep="")
-    print(f"[+] Single-sample variant list saved to: {out_path}")
+        out_path = os.path.join(args.final_output_dir, "variant_list.txt")
+        filtered[final_cols].to_csv(out_path, sep="\t", index=False, na_rep="")
+        print(f"[+] Single-sample variant list saved to: {out_path}")
 
 
 # ==============================================================================
@@ -402,6 +447,9 @@ if __name__ == "__main__":
     ap.add_argument("--regional_constraint_cache", required=True)
     ap.add_argument("--mitotipcache", required=True)
     ap.add_argument("--hmtvarcache", required=True)
+    ap.add_argument("--min-vaf", help="Minimum VAF threshold", default="0.01")
+    ap.add_argument("--min-dp", help="Minimum DP threshold", default="100")
+    ap.add_argument("--post_filtering", help="Post filtering flag", default="False")
     args = ap.parse_args()
 
     process_and_filter_variants(args)
