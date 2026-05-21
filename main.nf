@@ -403,6 +403,37 @@ EOS
     done
   fi
 
+  # Preserve shifted-mt realigned outputs with distinct names
+  rename_shifted_realigned() {
+    local search_root="\$1"
+    [[ -d "\${search_root}" ]] || return 0
+
+    while IFS= read -r -d '' f; do
+      base="\${f##*/}"
+      shifted_base="\${base/.realigned.bam/.realigned.shifted.bam}"
+      if [[ "\${shifted_base}" == "\${base}" ]]; then
+        shifted_base="\${base}.shifted"
+      fi
+      if [[ ! -e "\${TARGET_DIR}/\${shifted_base}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${shifted_base}"; then
+        cp -fL "\$f" "\${TARGET_DIR}/\${shifted_base}"
+      fi
+    done < <(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bam' -print0)
+
+    while IFS= read -r -d '' f; do
+      base="\${f##*/}"
+      shifted_base="\${base/.realigned.bai/.realigned.shifted.bai}"
+      if [[ "\${shifted_base}" == "\${base}" ]]; then
+        shifted_base="\${base}.shifted"
+      fi
+      if [[ ! -e "\${TARGET_DIR}/\${shifted_base}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${shifted_base}"; then
+        cp -fL "\$f" "\${TARGET_DIR}/\${shifted_base}"
+      fi
+    done < <(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bai' -print0)
+  }
+
+  rename_shifted_realigned "\${TARGET_DIR}"
+  rename_shifted_realigned "\${WORK_EXEC}"
+
   # Existence checks for three core artifacts
   VCF=\$(ls -1 "\${TARGET_DIR}"/*.final.split.vcf 2>/dev/null | head -n1 || true)
   CTM=\$(ls -1 "\${TARGET_DIR}"/*.haplocheck_contamination.txt 2>/dev/null | head -n1 || true)
