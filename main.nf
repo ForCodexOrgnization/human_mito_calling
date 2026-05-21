@@ -376,8 +376,9 @@ EOS
     "*.splitAndPassOnly.vcf" "*.splitAndPassOnly.vcf.idx"
     "*.per_base_coverage.tsv"
     "*.haplocheck_contamination.txt"
-    "*.realigned.bam" "*.realigned.bai" "*.realigned.bwa.stderr.log"
+    "*.realigned.bam" "*.realigned.bai"
     "*.metrics" "metrics.txt" "theoretical_sensitivity.txt"
+    "*.bam"
     "*.bai"
   )
 
