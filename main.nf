@@ -413,16 +413,24 @@ EOS
         cp -fL "\$f" "\${TARGET_DIR}/\${shifted_bam}"
       fi
       break
-    done < <(find -L "\${search_root}" -type f \( -path '*/call-AlignToShiftedMt/*' -o -path '*/call-AlignAndCall/*/call-AlignToShiftedMt/*' \) -name '*.realigned.bam' -print0)
+    done < <(find -L "\${search_root}" -type f \( -path '*/call-AlignToShiftedMt/*' -o -path "\${TARGET_DIR}/*" \) -name '*.realigned.bam' -print0)
 
     while IFS= read -r -d '' f; do
-      if [[ ! -e "\${TARGET_DIR}/\${shifted_bai}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${shifted_bai}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${shifted_bai}"
+      base="\${f##*/}"
+      shifted_base="\${base/.realigned.bam.bai/.realigned.shifted.bai}"
+      if [[ "\${shifted_base}" == "\${base}" ]]; then
+        shifted_base="\${base/.realigned.bai/.realigned.shifted.bai}"
       fi
-      break
-    done < <(find -L "\${search_root}" -type f \( -path '*/call-AlignToShiftedMt/*' -o -path '*/call-AlignAndCall/*/call-AlignToShiftedMt/*' \) \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print0)
+      if [[ "\${shifted_base}" == "\${base}" ]]; then
+        shifted_base="\${base}.shifted.bai"
+      fi
+      if [[ ! -e "\${TARGET_DIR}/\${shifted_base}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${shifted_base}"; then
+        cp -fL "\$f" "\${TARGET_DIR}/\${shifted_base}"
+      fi
+    done < <(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print0)
   }
 
+  copy_shifted_realigned "\${TARGET_DIR}"
   copy_shifted_realigned "\${WORK_EXEC}"
 
   # Keep canonical sample-level BAM/BAI names (e.g. sample.bam / sample.bai)
@@ -438,14 +446,14 @@ EOS
         cp -fL "\$f" "\${TARGET_DIR}/\${sample_bam}"
       fi
       break
-    done < <(find -L "\${search_root}" -type f \( -path '*/call-SubsetBamToChrM/*' -o -path '*/call-MitochondriaPipeline/*/call-SubsetBamToChrM/*' \) -name '*.bam' -print0)
+    done < <(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' -print0)
 
     while IFS= read -r -d '' f; do
       if [[ ! -e "\${TARGET_DIR}/\${sample_bai}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${sample_bai}"; then
         cp -fL "\$f" "\${TARGET_DIR}/\${sample_bai}"
       fi
       break
-    done < <(find -L "\${search_root}" -type f \( -path '*/call-SubsetBamToChrM/*' -o -path '*/call-MitochondriaPipeline/*/call-SubsetBamToChrM/*' \) \( -name '*.bai' -o -name '*.bam.bai' \) -print0)
+    done < <(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) -print0)
   }
 
   copy_sample_level_bam "\${WORK_EXEC}"
