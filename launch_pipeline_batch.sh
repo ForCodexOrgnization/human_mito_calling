@@ -83,6 +83,7 @@ if [ "$1" == "--finalize" ]; then
         if [ "$CLEANUP_ON_SUCCESS" = true ]; then
             echo "[CLEANUP] Removing intermediate and temporary files..."
             [ -d "$WORK_DIR_BASE" ] && rm -rf "$WORK_DIR_BASE"
+            [ -d "${SCRIPT_BASE_DIR}/work" ] && rm -rf "${SCRIPT_BASE_DIR}/work"
             find "${OUTPUT_DIR}" -mindepth 1 -type d -name "inputs" -exec rm -rf {} +
             
             # Remove high-volume raw pipeline outputs

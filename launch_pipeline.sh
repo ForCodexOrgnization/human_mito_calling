@@ -98,6 +98,10 @@ if [ "$1" == "--finalize" ]; then
                 echo "[CLEANUP] Removing work directory: $WORK_DIR_BASE"
                 rm -rf "$WORK_DIR_BASE"
             fi
+            if [ -d "${SCRIPT_BASE_DIR}/work" ]; then
+                echo "[CLEANUP] Removing default Nextflow work directory: ${SCRIPT_BASE_DIR}/work"
+                rm -rf "${SCRIPT_BASE_DIR}/work"
+            fi
             
             # 2. Remove all 'inputs' directories within the output directory (Temporary TSVs)
             find "${OUTPUT_DIR}" -mindepth 1 -type d -name "inputs" -exec echo "[CLEANUP] Removing: {}" \; -exec rm -rf {} +
