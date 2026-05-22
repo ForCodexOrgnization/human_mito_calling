@@ -432,6 +432,31 @@ EOS
   rename_shifted_realigned "\${TARGET_DIR}"
   rename_shifted_realigned "\${WORK_EXEC}"
 
+  # Keep only canonical sample-level BAM/BAI (e.g. sample.bam / sample.bai)
+  copy_sample_level_bam() {
+    local search_root="\$1"
+    local sample_bam="${meta.id}.bam"
+    local sample_bai="${meta.id}.bai"
+    [[ -d "\${search_root}" ]] || return 0
+
+    while IFS= read -r -d '' f; do
+      if [[ ! -e "\${TARGET_DIR}/\${sample_bam}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${sample_bam}"; then
+        cp -fL "\$f" "\${TARGET_DIR}/\${sample_bam}"
+      fi
+      break
+    done < <(find -L "\${search_root}" -mindepth 2 -type f -name "\${sample_bam}" -print0)
+
+    while IFS= read -r -d '' f; do
+      if [[ ! -e "\${TARGET_DIR}/\${sample_bai}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${sample_bai}"; then
+        cp -fL "\$f" "\${TARGET_DIR}/\${sample_bai}"
+      fi
+      break
+    done < <(find -L "\${search_root}" -mindepth 2 -type f -name "\${sample_bai}" -print0)
+  }
+
+  copy_sample_level_bam "\${TARGET_DIR}"
+  copy_sample_level_bam "\${WORK_EXEC}"
+
   # Existence checks for three core artifacts
   VCF=\$(ls -1 "\${TARGET_DIR}"/*.final.split.vcf 2>/dev/null | head -n1 || true)
   CTM=\$(ls -1 "\${TARGET_DIR}"/*.haplocheck_contamination.txt 2>/dev/null | head -n1 || true)
