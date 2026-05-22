@@ -376,7 +376,6 @@ EOS
     "*.splitAndPassOnly.vcf" "*.splitAndPassOnly.vcf.idx"
     "*.per_base_coverage.tsv"
     "*.haplocheck_contamination.txt"
-    "*.realigned.bam" "*.realigned.bai"
     "*.metrics" "metrics.txt" "theoretical_sensitivity.txt"
   )
 
@@ -401,6 +400,30 @@ EOS
     done
   fi
 
+  # Preserve regular-mt realigned outputs with canonical sample-level names
+  copy_regular_realigned() {
+    local search_root="\$1"
+    local regular_bam="${meta.id}.realigned.bam"
+    local regular_bai="${meta.id}.realigned.bai"
+    [[ -d "\${search_root}" ]] || return 0
+
+    local bam_src=""
+    bam_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
+    if [[ -n "\${bam_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${regular_bam}" ]] || ! cmp -s "\${bam_src}" "\${TARGET_DIR}/\${regular_bam}"; then
+        cp -fL "\${bam_src}" "\${TARGET_DIR}/\${regular_bam}"
+      fi
+    fi
+
+    local bai_src=""
+    bai_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
+    if [[ -n "\${bai_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${regular_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${regular_bai}"; then
+        cp -fL "\${bai_src}" "\${TARGET_DIR}/\${regular_bai}"
+      fi
+    fi
+  }
+
   # Preserve shifted-mt realigned outputs with canonical sample-level names
   copy_shifted_realigned() {
     local search_root="\$1"
@@ -408,28 +431,25 @@ EOS
     local shifted_bai="${meta.id}.realigned.shifted.bai"
     [[ -d "\${search_root}" ]] || return 0
 
-    while IFS= read -r -d '' f; do
-      if [[ ! -e "\${TARGET_DIR}/\${shifted_bam}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${shifted_bam}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${shifted_bam}"
+    local bam_src=""
+    bam_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
+    if [[ -n "\${bam_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${shifted_bam}" ]] || ! cmp -s "\${bam_src}" "\${TARGET_DIR}/\${shifted_bam}"; then
+        cp -fL "\${bam_src}" "\${TARGET_DIR}/\${shifted_bam}"
       fi
-      break
-    done < <(find -L "\${search_root}" -type f \( -path '*/call-AlignToShiftedMt/*' -o -path "\${TARGET_DIR}/*" \) -name '*.realigned.bam' -print0)
+    fi
 
-    while IFS= read -r -d '' f; do
-      base="\${f##*/}"
-      shifted_base="\${base/.realigned.bam.bai/.realigned.shifted.bai}"
-      if [[ "\${shifted_base}" == "\${base}" ]]; then
-        shifted_base="\${base/.realigned.bai/.realigned.shifted.bai}"
+    local bai_src=""
+    bai_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
+    if [[ -n "\${bai_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${shifted_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${shifted_bai}"; then
+        cp -fL "\${bai_src}" "\${TARGET_DIR}/\${shifted_bai}"
       fi
-      if [[ "\${shifted_base}" == "\${base}" ]]; then
-        shifted_base="\${base}.shifted.bai"
-      fi
-      if [[ ! -e "\${TARGET_DIR}/\${shifted_base}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${shifted_base}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${shifted_base}"
-      fi
-    done < <(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print0)
+    fi
   }
 
+  copy_regular_realigned "\${TARGET_DIR}"
+  copy_regular_realigned "\${WORK_EXEC}"
   copy_shifted_realigned "\${TARGET_DIR}"
   copy_shifted_realigned "\${WORK_EXEC}"
 
@@ -441,21 +461,24 @@ EOS
     local sample_bai="${meta.id}.bai"
     [[ -d "\${search_root}" ]] || return 0
 
-    while IFS= read -r -d '' f; do
-      if [[ ! -e "\${TARGET_DIR}/\${sample_bam}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${sample_bam}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${sample_bam}"
+    local bam_src=""
+    bam_src=$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' -print | LC_ALL=C sort | head -n1 || true)
+    if [[ -n "\${bam_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${sample_bam}" ]] || ! cmp -s "\${bam_src}" "\${TARGET_DIR}/\${sample_bam}"; then
+        cp -fL "\${bam_src}" "\${TARGET_DIR}/\${sample_bam}"
       fi
-      break
-    done < <(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' -print0)
+    fi
 
-    while IFS= read -r -d '' f; do
-      if [[ ! -e "\${TARGET_DIR}/\${sample_bai}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${sample_bai}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${sample_bai}"
+    local bai_src=""
+    bai_src=$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
+    if [[ -n "\${bai_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${sample_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${sample_bai}"; then
+        cp -fL "\${bai_src}" "\${TARGET_DIR}/\${sample_bai}"
       fi
-      break
-    done < <(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) -print0)
+    fi
   }
 
+  copy_sample_level_bam "\${TARGET_DIR}"
   copy_sample_level_bam "\${WORK_EXEC}"
 
   # Existence checks for three core artifacts
