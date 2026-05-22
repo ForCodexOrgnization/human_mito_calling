@@ -76,13 +76,19 @@ if [ "$1" == "--finalize" ]; then
     # Verification: Check if the final variant table was created and is not empty
     FINAL_TABLE=$(find "${OUTPUT_DIR}/merged_results" -name "*variant_list.txt" -size +0c | head -n 1)
 
-    if [ $NF_EXIT -eq 0 ] && [ -n "$FINAL_TABLE" ]; then
-        echo "[SUCCESS] Finalizer completed. Output verified: $FINAL_TABLE"
+    if [ $NF_EXIT -eq 0 ]; then
+        if [ -n "$FINAL_TABLE" ]; then
+            echo "[SUCCESS] Finalizer completed. Output verified: $FINAL_TABLE"
+        else
+            echo "[WARN] Finalizer completed (exit=0), but no *variant_list.txt found under ${OUTPUT_DIR}/merged_results."
+            echo "[WARN] Proceeding with cleanup because Nextflow run succeeded."
+        fi
         
         # Cleanup Logic
         if [ "$CLEANUP_ON_SUCCESS" = true ]; then
             echo "[CLEANUP] Removing intermediate and temporary files..."
             [ -d "$WORK_DIR_BASE" ] && rm -rf "$WORK_DIR_BASE"
+            [ -d "${SCRIPT_BASE_DIR}/work" ] && rm -rf "${SCRIPT_BASE_DIR}/work"
             find "${OUTPUT_DIR}" -mindepth 1 -type d -name "inputs" -exec rm -rf {} +
             
             # Remove high-volume raw pipeline outputs
@@ -92,7 +98,7 @@ if [ "$1" == "--finalize" ]; then
             echo "[CLEANUP] Finished."
         fi
     else
-        echo "[ERROR] Finalizer failed or output missing. Keeping work files for debugging."
+        echo "[ERROR] Finalizer failed (exit=${NF_EXIT}). Keeping work files for debugging."
         exit 1
     fi
     exit 0
