@@ -378,8 +378,6 @@ EOS
     "*.haplocheck_contamination.txt"
     "*.realigned.bam" "*.realigned.bai"
     "*.metrics" "metrics.txt" "theoretical_sensitivity.txt"
-    "*.bam"
-    "*.bai"
   )
 
   for pat in "\${patterns[@]}"; do
