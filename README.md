@@ -270,6 +270,9 @@ The structure is:
 │   ├── variant_calling/
 │   │   ├── Sample1.final.vcf.gz
 │   │   ├── Sample1.per_base_coverage.tsv
+│   │   ├── Sample1.bam
+│   │   ├── Sample1.realigned.shifted.bam
+│   │   ├── Sample1.realigned.shifted.bai
 │   │   └── ... (other WDL outputs)
 │   ├── mtCN/
 │   │   └── mtCN_summary.txt
