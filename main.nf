@@ -456,7 +456,6 @@ EOS
     done < <(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) -print0)
   }
 
-  copy_sample_level_bam "\${TARGET_DIR}"
   copy_sample_level_bam "\${WORK_EXEC}"
 
   # Existence checks for three core artifacts
