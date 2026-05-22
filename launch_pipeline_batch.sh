@@ -14,25 +14,26 @@ set -e
 # ==============================================================================
 
 # 1) File and Directory Paths
-SCRIPT_BASE_DIR="/home/lt692/project_pi_njl27/lt692/human_mito_calling-main"   
+SCRIPT_BASE_DIR="/home/lt692/ycga_work/human_standard/human_mito_calling-main"   
 MAIN_NF_SCRIPT="$SCRIPT_BASE_DIR/main.nf"                                      
-NEXTFLOW_CONFIG="$SCRIPT_BASE_DIR/nextflow_Bouchet.config"                     
+NEXTFLOW_CONFIG="$SCRIPT_BASE_DIR/nextflow_Mccleary.config"                     
 
-MASTER_SAMPLE_LIST="/home/lt692/scratch_pi_njl27/lt692/human_mt_variant_calling/test_data/test_sample_cram.tsv"  
-OUTPUT_DIR="/home/lt692/scratch_pi_njl27/lt692/human_mt_variant_calling/test_data/test_cram_results"             
-WORK_DIR_BASE="/home/lt692/scratch_pi_njl27/lt692/human_mt_variant_calling/nextflow_work_cram"                   
+MASTER_SAMPLE_LIST="/home/lt692/ycga_work/human_standard/test_data/test_sample_cram.tsv"  
+OUTPUT_DIR="/home/lt692/ycga_work/human_standard/test_data/test_cram_results"             
+WORK_DIR_BASE="/home/lt692/ycga_work/human_standard/test_data/nextflow_work_cram"                   
 
 # 2) Parallelism and Batch Control
 BATCH_SIZE=10            # Number of samples processed within a single Slurm job
-CONCURRENT_BATCHES=2     # Maximum number of Batch Jobs allowed to run at once (Slurm throttling)
+CONCURRENT_BATCHES=5     # Maximum number of Batch Jobs allowed to run at once (Slurm throttling)
 CLEANUP_ON_SUCCESS=true  # Delete intermediate files after successful completion
 
 # 3) Pipeline Mode Configuration
 PIPELINE_MODE="population"
 DISEASE_PED_FILE=""
+POST_FILTERING=false     # Whether do the post-filtering or not
 
 # 4) Environment Setup
-module load Nextflow/24.10.2
+module load Nextflow/24.04.4
 
 # Temporary file to store the list of unique samples
 INTERNAL_SAMPLE_LIST="${OUTPUT_DIR}/unique_samples_for_job_array.list"
