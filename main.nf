@@ -401,21 +401,19 @@ EOS
     done
   fi
 
-  # Preserve shifted-mt realigned outputs with distinct names
-  rename_shifted_realigned() {
+  # Preserve shifted-mt realigned outputs with canonical sample-level names
+  copy_shifted_realigned() {
     local search_root="\$1"
+    local shifted_bam="${meta.id}.realigned.shifted.bam"
+    local shifted_bai="${meta.id}.realigned.shifted.bai"
     [[ -d "\${search_root}" ]] || return 0
 
     while IFS= read -r -d '' f; do
-      base="\${f##*/}"
-      shifted_base="\${base/.realigned.bam/.realigned.shifted.bam}"
-      if [[ "\${shifted_base}" == "\${base}" ]]; then
-        shifted_base="\${base}.shifted"
+      if [[ ! -e "\${TARGET_DIR}/\${shifted_bam}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${shifted_bam}"; then
+        cp -fL "\$f" "\${TARGET_DIR}/\${shifted_bam}"
       fi
-      if [[ ! -e "\${TARGET_DIR}/\${shifted_base}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${shifted_base}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${shifted_base}"
-      fi
-    done < <(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bam' -print0)
+      break
+    done < <(find -L "\${search_root}" -type f \( -path '*/call-AlignToShiftedMt/*' -o -path "\${TARGET_DIR}/*" \) -name '*.realigned.bam' -print0)
 
     while IFS= read -r -d '' f; do
       base="\${f##*/}"
@@ -432,8 +430,8 @@ EOS
     done < <(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print0)
   }
 
-  rename_shifted_realigned "\${TARGET_DIR}"
-  rename_shifted_realigned "\${WORK_EXEC}"
+  copy_shifted_realigned "\${TARGET_DIR}"
+  copy_shifted_realigned "\${WORK_EXEC}"
 
   # Keep canonical sample-level BAM/BAI names (e.g. sample.bam / sample.bai)
   # from SubsetBamToChrM outputs.
