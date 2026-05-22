@@ -461,21 +461,24 @@ EOS
     local sample_bai="${meta.id}.bai"
     [[ -d "\${search_root}" ]] || return 0
 
-    while IFS= read -r -d '' f; do
-      if [[ ! -e "\${TARGET_DIR}/\${sample_bam}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${sample_bam}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${sample_bam}"
+    local bam_src=""
+    bam_src=$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' -print | LC_ALL=C sort | head -n1 || true)
+    if [[ -n "\${bam_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${sample_bam}" ]] || ! cmp -s "\${bam_src}" "\${TARGET_DIR}/\${sample_bam}"; then
+        cp -fL "\${bam_src}" "\${TARGET_DIR}/\${sample_bam}"
       fi
-      break
-    done < <(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' -print0)
+    fi
 
-    while IFS= read -r -d '' f; do
-      if [[ ! -e "\${TARGET_DIR}/\${sample_bai}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${sample_bai}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${sample_bai}"
+    local bai_src=""
+    bai_src=$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
+    if [[ -n "\${bai_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${sample_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${sample_bai}"; then
+        cp -fL "\${bai_src}" "\${TARGET_DIR}/\${sample_bai}"
       fi
-      break
-    done < <(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) -print0)
+    fi
   }
 
+  copy_sample_level_bam "\${TARGET_DIR}"
   copy_sample_level_bam "\${WORK_EXEC}"
 
   # Existence checks for three core artifacts
