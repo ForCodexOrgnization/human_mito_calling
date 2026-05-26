@@ -183,10 +183,6 @@ Before launching, review and update the following variables in `launch_pipeline.
 
 </div>
 
-## Pipeline Overview
-Will be added later (maybe a figure).
-
-
 ## Monitoring
 You can monitor the progress of the pipeline by checking the Slurm job status using the `squeue` command. Additionally, log files for each job will be generated in the `log` folder with the same directory as the script (e.g., `/log/mito_pipeline_manager_xxxxx_0.log` for each job). The log files record job submissions, execution status, and any errors encountered. An example of a successful run log is shown below:
 ```
