@@ -376,8 +376,8 @@ EOS
     "*.splitAndPassOnly.vcf" "*.splitAndPassOnly.vcf.idx"
     "*.per_base_coverage.tsv"
     "*.haplocheck_contamination.txt"
-    "*.realigned.bam" "*.realigned.bai"
     "*.metrics" "metrics.txt" "theoretical_sensitivity.txt"
+
   )
 
   for pat in "\${patterns[@]}"; do
@@ -401,6 +401,54 @@ EOS
     done
   fi
 
+  # Step 1: copy ALL BAM/BAI-like files from cromwell trees
+  copy_all_bam_like() {
+    local search_root="\$1"
+    [[ -d "\${search_root}" ]] || return 0
+
+    while IFS= read -r -d '' f; do
+      base="\${f##*/}"
+      if [[ ! -e "\${TARGET_DIR}/\${base}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${base}"; then
+        cp -fL "\$f" "\${TARGET_DIR}/\${base}"
+      fi
+    done < <(find -L "\${search_root}" -type f \( -name '*.bam' -o -name '*.bai' -o -name '*.bam.bai' \) -print0)
+  }
+
+  copy_all_bam_like "\${TARGET_DIR}"
+  copy_all_bam_like "\${WORK_EXEC}"
+
+  # Helper: copy source file to canonical target name
+  copy_if_found() {
+    local src="\$1"
+    local dest_name="\$2"
+
+    if [[ -n "\${src}" && -e "\${src}" ]]; then
+      echo "[KEEP] \${src} -> \${TARGET_DIR}/\${dest_name}"
+      if [[ ! -e "\${TARGET_DIR}/\${dest_name}" ]] || ! cmp -s "\${src}" "\${TARGET_DIR}/\${dest_name}"; then
+        cp -fL "\${src}" "\${TARGET_DIR}/\${dest_name}"
+      fi
+    else
+      echo "[WARN] source not found for \${dest_name}" >&2
+    fi
+  }
+
+  # Step 2: canonical naming from task-specific call paths
+  # Preserve regular-mt realigned outputs with canonical sample-level names
+  copy_regular_realigned() {
+    local search_root="\$1"
+    local regular_bam="${meta.id}.realigned.bam"
+    local regular_bai="${meta.id}.realigned.bai"
+    [[ -d "\${search_root}" ]] || return 0
+
+    local bam_src=""
+    bam_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
+    copy_if_found "\${bam_src}" "\${regular_bam}"
+
+    local bai_src=""
+    bai_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
+    copy_if_found "\${bai_src}" "\${regular_bai}"
+  }
+
   # Preserve shifted-mt realigned outputs with canonical sample-level names
   copy_shifted_realigned() {
     local search_root="\$1"
@@ -408,28 +456,17 @@ EOS
     local shifted_bai="${meta.id}.realigned.shifted.bai"
     [[ -d "\${search_root}" ]] || return 0
 
-    while IFS= read -r -d '' f; do
-      if [[ ! -e "\${TARGET_DIR}/\${shifted_bam}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${shifted_bam}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${shifted_bam}"
-      fi
-      break
-    done < <(find -L "\${search_root}" -type f \( -path '*/call-AlignToShiftedMt/*' -o -path "\${TARGET_DIR}/*" \) -name '*.realigned.bam' -print0)
+    local bam_src=""
+    bam_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
+    copy_if_found "\${bam_src}" "\${shifted_bam}"
 
-    while IFS= read -r -d '' f; do
-      base="\${f##*/}"
-      shifted_base="\${base/.realigned.bam.bai/.realigned.shifted.bai}"
-      if [[ "\${shifted_base}" == "\${base}" ]]; then
-        shifted_base="\${base/.realigned.bai/.realigned.shifted.bai}"
-      fi
-      if [[ "\${shifted_base}" == "\${base}" ]]; then
-        shifted_base="\${base}.shifted.bai"
-      fi
-      if [[ ! -e "\${TARGET_DIR}/\${shifted_base}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${shifted_base}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${shifted_base}"
-      fi
-    done < <(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print0)
+    local bai_src=""
+    bai_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
+    copy_if_found "\${bai_src}" "\${shifted_bai}"
   }
 
+  copy_regular_realigned "\${TARGET_DIR}"
+  copy_regular_realigned "\${WORK_EXEC}"
   copy_shifted_realigned "\${TARGET_DIR}"
   copy_shifted_realigned "\${WORK_EXEC}"
 
@@ -441,22 +478,42 @@ EOS
     local sample_bai="${meta.id}.bai"
     [[ -d "\${search_root}" ]] || return 0
 
-    while IFS= read -r -d '' f; do
-      if [[ ! -e "\${TARGET_DIR}/\${sample_bam}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${sample_bam}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${sample_bam}"
-      fi
-      break
-    done < <(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' -print0)
+    local bam_src=""
+    bam_src=$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' ! -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
+    copy_if_found "\${bam_src}" "\${sample_bam}"
 
-    while IFS= read -r -d '' f; do
-      if [[ ! -e "\${TARGET_DIR}/\${sample_bai}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${sample_bai}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${sample_bai}"
-      fi
-      break
-    done < <(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) -print0)
+    local bai_src=""
+    bai_src=$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) ! -name '*.realigned.bai' ! -name '*.realigned.bam.bai' -print | LC_ALL=C sort | head -n1 || true)
+    copy_if_found "\${bai_src}" "\${sample_bai}"
   }
 
+  copy_sample_level_bam "\${TARGET_DIR}"
   copy_sample_level_bam "\${WORK_EXEC}"
+
+  # Step 3: remove undesired BAM/BAI outputs and keep only canonical set
+  keep_bam_names=(
+    "${meta.id}.bam"
+    "${meta.id}.bai"
+    "${meta.id}.realigned.bam"
+    "${meta.id}.realigned.bai"
+    "${meta.id}.realigned.shifted.bam"
+    "${meta.id}.realigned.shifted.bai"
+  )
+
+  for f in "\${TARGET_DIR}"/*.bam "\${TARGET_DIR}"/*.bai "\${TARGET_DIR}"/*.bam.bai; do
+    [[ -e "\$f" ]] || continue
+    base="\${f##*/}"
+    keep=false
+    for k in "\${keep_bam_names[@]}"; do
+      if [[ "\${base}" == "\${k}" ]]; then
+        keep=true
+        break
+      fi
+    done
+    if [[ "\${keep}" == false ]]; then
+      rm -f "\$f"
+    fi
+  done
 
   # Existence checks for three core artifacts
   VCF=\$(ls -1 "\${TARGET_DIR}"/*.final.split.vcf 2>/dev/null | head -n1 || true)
@@ -480,10 +537,17 @@ EOS
 
   for pat in "\${patterns[@]}"; do
     for f in "\${TARGET_DIR}"/\$pat; do
+      [[ -e "\$f" ]] || continue
       base="\${f##*/}"
       [[ -e "\${EMIT_DIR}/\${base}" ]] || ln -s "\$f" "\${EMIT_DIR}/\${base}"
     done
   done
+
+  echo "[OK] Final variant_calling outputs for ${meta.id}:"
+  ls -lh "\${TARGET_DIR}" || true
+
+  echo "[OK] nxf_emit outputs for ${meta.id}:"
+  ls -lh "\${EMIT_DIR}" || true
 """
 }
 
