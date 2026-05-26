@@ -377,6 +377,7 @@ EOS
     "*.per_base_coverage.tsv"
     "*.haplocheck_contamination.txt"
     "*.metrics" "metrics.txt" "theoretical_sensitivity.txt"
+
   )
 
   for pat in "\${patterns[@]}"; do
@@ -481,6 +482,31 @@ EOS
   copy_sample_level_bam "\${TARGET_DIR}"
   copy_sample_level_bam "\${WORK_EXEC}"
 
+  # Step 3: remove undesired BAM/BAI outputs and keep only canonical set
+  keep_bam_names=(
+    "${meta.id}.bam"
+    "${meta.id}.bai"
+    "${meta.id}.realigned.bam"
+    "${meta.id}.realigned.bai"
+    "${meta.id}.realigned.shifted.bam"
+    "${meta.id}.realigned.shifted.bai"
+  )
+
+  for f in "\${TARGET_DIR}"/*.bam "\${TARGET_DIR}"/*.bai "\${TARGET_DIR}"/*.bam.bai; do
+    [[ -e "\$f" ]] || continue
+    base="\${f##*/}"
+    keep=false
+    for k in "\${keep_bam_names[@]}"; do
+      if [[ "\${base}" == "\${k}" ]]; then
+        keep=true
+        break
+      fi
+    done
+    if [[ "\${keep}" == false ]]; then
+      rm -f "\$f"
+    fi
+  done
+
   # Existence checks for three core artifacts
   VCF=\$(ls -1 "\${TARGET_DIR}"/*.final.split.vcf 2>/dev/null | head -n1 || true)
   CTM=\$(ls -1 "\${TARGET_DIR}"/*.haplocheck_contamination.txt 2>/dev/null | head -n1 || true)
@@ -503,10 +529,17 @@ EOS
 
   for pat in "\${patterns[@]}"; do
     for f in "\${TARGET_DIR}"/\$pat; do
+      [[ -e "\$f" ]] || continue
       base="\${f##*/}"
       [[ -e "\${EMIT_DIR}/\${base}" ]] || ln -s "\$f" "\${EMIT_DIR}/\${base}"
     done
   done
+
+  echo "[OK] Final variant_calling outputs for ${meta.id}:"
+  ls -lh "\${TARGET_DIR}" || true
+
+  echo "[OK] nxf_emit outputs for ${meta.id}:"
+  ls -lh "\${EMIT_DIR}" || true
 """
 }
 
