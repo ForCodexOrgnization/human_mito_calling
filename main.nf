@@ -401,38 +401,6 @@ EOS
     done
   fi
 
-  # Step 1: copy ALL BAM/BAI-like files from cromwell trees
-  copy_all_bam_like() {
-    local search_root="\$1"
-    [[ -d "\${search_root}" ]] || return 0
-
-    while IFS= read -r -d '' f; do
-      base="\${f##*/}"
-      if [[ ! -e "\${TARGET_DIR}/\${base}" ]] || ! cmp -s "\$f" "\${TARGET_DIR}/\${base}"; then
-        cp -fL "\$f" "\${TARGET_DIR}/\${base}"
-      fi
-    done < <(find -L "\${search_root}" -type f \( -name '*.bam' -o -name '*.bai' -o -name '*.bam.bai' \) -print0)
-  }
-
-  copy_all_bam_like "\${TARGET_DIR}"
-  copy_all_bam_like "\${WORK_EXEC}"
-
-  # Helper: copy source file to canonical target name
-  copy_if_found() {
-    local src="\$1"
-    local dest_name="\$2"
-
-    if [[ -n "\${src}" && -e "\${src}" ]]; then
-      echo "[KEEP] \${src} -> \${TARGET_DIR}/\${dest_name}"
-      if [[ ! -e "\${TARGET_DIR}/\${dest_name}" ]] || ! cmp -s "\${src}" "\${TARGET_DIR}/\${dest_name}"; then
-        cp -fL "\${src}" "\${TARGET_DIR}/\${dest_name}"
-      fi
-    else
-      echo "[WARN] source not found for \${dest_name}" >&2
-    fi
-  }
-
-  # Step 2: canonical naming from task-specific call paths
   # Preserve regular-mt realigned outputs with canonical sample-level names
   copy_regular_realigned() {
     local search_root="\$1"
@@ -442,11 +410,19 @@ EOS
 
     local bam_src=""
     bam_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
-    copy_if_found "\${bam_src}" "\${regular_bam}"
+    if [[ -n "\${bam_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${regular_bam}" ]] || ! cmp -s "\${bam_src}" "\${TARGET_DIR}/\${regular_bam}"; then
+        cp -fL "\${bam_src}" "\${TARGET_DIR}/\${regular_bam}"
+      fi
+    fi
 
     local bai_src=""
     bai_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
-    copy_if_found "\${bai_src}" "\${regular_bai}"
+    if [[ -n "\${bai_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${regular_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${regular_bai}"; then
+        cp -fL "\${bai_src}" "\${TARGET_DIR}/\${regular_bai}"
+      fi
+    fi
   }
 
   # Preserve shifted-mt realigned outputs with canonical sample-level names
@@ -458,11 +434,19 @@ EOS
 
     local bam_src=""
     bam_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
-    copy_if_found "\${bam_src}" "\${shifted_bam}"
+    if [[ -n "\${bam_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${shifted_bam}" ]] || ! cmp -s "\${bam_src}" "\${TARGET_DIR}/\${shifted_bam}"; then
+        cp -fL "\${bam_src}" "\${TARGET_DIR}/\${shifted_bam}"
+      fi
+    fi
 
     local bai_src=""
     bai_src=$(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
-    copy_if_found "\${bai_src}" "\${shifted_bai}"
+    if [[ -n "\${bai_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${shifted_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${shifted_bai}"; then
+        cp -fL "\${bai_src}" "\${TARGET_DIR}/\${shifted_bai}"
+      fi
+    fi
   }
 
   copy_regular_realigned "\${TARGET_DIR}"
@@ -479,12 +463,20 @@ EOS
     [[ -d "\${search_root}" ]] || return 0
 
     local bam_src=""
-    bam_src=$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' ! -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
-    copy_if_found "\${bam_src}" "\${sample_bam}"
+    bam_src=$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' -print | LC_ALL=C sort | head -n1 || true)
+    if [[ -n "\${bam_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${sample_bam}" ]] || ! cmp -s "\${bam_src}" "\${TARGET_DIR}/\${sample_bam}"; then
+        cp -fL "\${bam_src}" "\${TARGET_DIR}/\${sample_bam}"
+      fi
+    fi
 
     local bai_src=""
-    bai_src=$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) ! -name '*.realigned.bai' ! -name '*.realigned.bam.bai' -print | LC_ALL=C sort | head -n1 || true)
-    copy_if_found "\${bai_src}" "\${sample_bai}"
+    bai_src=$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
+    if [[ -n "\${bai_src}" ]]; then
+      if [[ ! -e "\${TARGET_DIR}/\${sample_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${sample_bai}"; then
+        cp -fL "\${bai_src}" "\${TARGET_DIR}/\${sample_bai}"
+      fi
+    fi
   }
 
   copy_sample_level_bam "\${TARGET_DIR}"
