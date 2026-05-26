@@ -29,7 +29,7 @@ CLEANUP_ON_SUCCESS=true  # Delete intermediate files after successful completion
 
 # 3) Pipeline Mode Configuration
 PIPELINE_MODE="population"
-DISEASE_PED_FILE=""
+DISEASE_META_FILE=""
 POST_FILTERING=false     # Whether do the post-filtering or not
 
 # 4) Environment Setup
@@ -57,7 +57,7 @@ if [ "$1" == "--finalize" ]; then
     # Prepare arguments for disease mode
     EXTRA_ARGS=()
     if [ "${PIPELINE_MODE}" = "disease" ]; then
-        EXTRA_ARGS+=( --disease_ped_file "${DISEASE_PED_FILE}" )
+        EXTRA_ARGS+=( --disease_meta_file "${DISEASE_META_FILE}" )
     fi
 
     # Run Nextflow Finalizer
