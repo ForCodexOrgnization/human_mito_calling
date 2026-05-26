@@ -14,7 +14,7 @@ set -e
 # ==============================================================================
 
 # 1) File and Directory Paths
-SCRIPT_BASE_DIR="/home/lt692/ycga_work/human_standard/human_mito_calling-main"   
+SCRIPT_BASE_DIR="/home/lt692/ycga_work/human_standard/human_mito_calling"   
 MAIN_NF_SCRIPT="$SCRIPT_BASE_DIR/main.nf"                                      
 NEXTFLOW_CONFIG="$SCRIPT_BASE_DIR/nextflow_Mccleary.config"                     
 
