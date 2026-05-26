@@ -26,8 +26,7 @@ bash launch_pipeline.sh
 ### Note
 Processing three CRAM test samples (~5.3 GB each) completes in about 48m 57s end-to-end with the default settings (submit-rate limit 180/h, queue size 20; see [Configuration](#configuration) for CPU/memory). You can adjust these parameters to match your cluster capacity.
 
-For Yale HPC user, you could download the configureation file directly from https://///
-All the environment has been set
+For Yale HPC users, you can download the configuration file directly from [here](https://drive.google.com/drive/folders/1g9N-zMU3uPn-wKQR9mu-edsTbORwseIF). All environments have already been set up.
 
 
 ## Prerequisites
