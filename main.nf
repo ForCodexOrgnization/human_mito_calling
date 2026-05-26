@@ -409,7 +409,7 @@ EOS
     [[ -d "\${search_root}" ]] || return 0
 
     local bam_src=""
-    IFS= read -r bam_src < <(find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
+    bam_src=\$(find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
     if [[ -n "\${bam_src}" ]]; then
       if [[ ! -e "\${TARGET_DIR}/\${regular_bam}" ]] || ! cmp -s "\${bam_src}" "\${TARGET_DIR}/\${regular_bam}"; then
         cp -fL "\${bam_src}" "\${TARGET_DIR}/\${regular_bam}"
@@ -417,7 +417,7 @@ EOS
     fi
 
     local bai_src=""
-    IFS= read -r bai_src < <(( find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' -name '*.realigned.bai' -print; find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' -name '*.realigned.bam.bai' -print ) | LC_ALL=C sort | head -n1 || true)
+    bai_src=\$( ( find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' -name '*.realigned.bai' -print; find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' -name '*.realigned.bam.bai' -print ) | LC_ALL=C sort | head -n1 || true)
     if [[ -n "\${bai_src}" ]]; then
       if [[ ! -e "\${TARGET_DIR}/\${regular_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${regular_bai}"; then
         cp -fL "\${bai_src}" "\${TARGET_DIR}/\${regular_bai}"
@@ -433,7 +433,7 @@ EOS
     [[ -d "\${search_root}" ]] || return 0
 
     local bam_src=""
-    IFS= read -r bam_src < <(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
+    bam_src=\$(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bam' -print | LC_ALL=C sort | head -n1 || true)
     if [[ -n "\${bam_src}" ]]; then
       if [[ ! -e "\${TARGET_DIR}/\${shifted_bam}" ]] || ! cmp -s "\${bam_src}" "\${TARGET_DIR}/\${shifted_bam}"; then
         cp -fL "\${bam_src}" "\${TARGET_DIR}/\${shifted_bam}"
@@ -441,7 +441,7 @@ EOS
     fi
 
     local bai_src=""
-    IFS= read -r bai_src < <(( find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bai' -print; find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bam.bai' -print ) | LC_ALL=C sort | head -n1 || true)
+    bai_src=\$( ( find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bai' -print; find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' -name '*.realigned.bam.bai' -print ) | LC_ALL=C sort | head -n1 || true)
     if [[ -n "\${bai_src}" ]]; then
       if [[ ! -e "\${TARGET_DIR}/\${shifted_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${shifted_bai}"; then
         cp -fL "\${bai_src}" "\${TARGET_DIR}/\${shifted_bai}"
@@ -463,7 +463,7 @@ EOS
     [[ -d "\${search_root}" ]] || return 0
 
     local bam_src=""
-    IFS= read -r bam_src < <(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' -print | LC_ALL=C sort | head -n1 || true)
+    bam_src=\$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam' -print | LC_ALL=C sort | head -n1 || true)
     if [[ -n "\${bam_src}" ]]; then
       if [[ ! -e "\${TARGET_DIR}/\${sample_bam}" ]] || ! cmp -s "\${bam_src}" "\${TARGET_DIR}/\${sample_bam}"; then
         cp -fL "\${bam_src}" "\${TARGET_DIR}/\${sample_bam}"
@@ -471,7 +471,7 @@ EOS
     fi
 
     local bai_src=""
-    IFS= read -r bai_src < <(( find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bai' -print; find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam.bai' -print ) | LC_ALL=C sort | head -n1 || true)
+    bai_src=\$( ( find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bai' -print; find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' -name '*.bam.bai' -print ) | LC_ALL=C sort | head -n1 || true)
     if [[ -n "\${bai_src}" ]]; then
       if [[ ! -e "\${TARGET_DIR}/\${sample_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${sample_bai}"; then
         cp -fL "\${bai_src}" "\${TARGET_DIR}/\${sample_bai}"
