@@ -417,7 +417,7 @@ EOS
     fi
 
     local bai_src=""
-    bai_src=\$(find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' '(' -name '*.realigned.bai' -o -name '*.realigned.bam.bai' ')' -print | LC_ALL=C sort | head -n1 || true)
+    bai_src=\$(find -L "\${search_root}" -type f -path '*/call-AlignToMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
     if [[ -n "\${bai_src}" ]]; then
       if [[ ! -e "\${TARGET_DIR}/\${regular_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${regular_bai}"; then
         cp -fL "\${bai_src}" "\${TARGET_DIR}/\${regular_bai}"
@@ -441,7 +441,7 @@ EOS
     fi
 
     local bai_src=""
-    bai_src=\$(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' '(' -name '*.realigned.bai' -o -name '*.realigned.bam.bai' ')' -print | LC_ALL=C sort | head -n1 || true)
+    bai_src=\$(find -L "\${search_root}" -type f -path '*/call-AlignToShiftedMt/*' \( -name '*.realigned.bai' -o -name '*.realigned.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
     if [[ -n "\${bai_src}" ]]; then
       if [[ ! -e "\${TARGET_DIR}/\${shifted_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${shifted_bai}"; then
         cp -fL "\${bai_src}" "\${TARGET_DIR}/\${shifted_bai}"
@@ -471,7 +471,7 @@ EOS
     fi
 
     local bai_src=""
-    bai_src=\$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' '(' -name '*.bai' -o -name '*.bam.bai' ')' -print | LC_ALL=C sort | head -n1 || true)
+    bai_src=\$(find -L "\${search_root}" -type f -path '*/call-SubsetBamToChrM/*' \( -name '*.bai' -o -name '*.bam.bai' \) -print | LC_ALL=C sort | head -n1 || true)
     if [[ -n "\${bai_src}" ]]; then
       if [[ ! -e "\${TARGET_DIR}/\${sample_bai}" ]] || ! cmp -s "\${bai_src}" "\${TARGET_DIR}/\${sample_bai}"; then
         cp -fL "\${bai_src}" "\${TARGET_DIR}/\${sample_bai}"
