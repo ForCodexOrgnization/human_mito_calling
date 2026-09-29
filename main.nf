@@ -307,23 +307,6 @@ process RUN_WDL_VARIANT_CALLING {
   #!/usr/bin/env bash
   set -euo pipefail
 
-  # --- Dynamically monitoring ---
-  MAX_ALLOWED_JOBS=120
-  CHECK_INTERVAL=30
-  echo "[INFO] Monitoring cluster load for user \${USER}..."
-
-  while true; do
-      CURRENT_COUNT=\$(squeue -u \${USER} -h -t all | wc -l)
-      
-      if (( CURRENT_COUNT < MAX_ALLOWED_JOBS )); then
-          echo "[OK] Cluster load is \${CURRENT_COUNT}. Proceeding with ${meta.id}..."
-          break
-      else
-          echo "[WAIT] High load (\${CURRENT_COUNT} jobs). Limit is \${MAX_ALLOWED_JOBS}. Sleeping \${CHECK_INTERVAL}s..."
-          sleep \${CHECK_INTERVAL}
-      fi
-  done
-  # ---------------------------------------------
 
   TARGET_DIR="${params.outdir}/${meta.id}/variant_calling"
   mkdir -p "\${TARGET_DIR}"
@@ -339,32 +322,10 @@ process RUN_WDL_VARIANT_CALLING {
       }
   }
 EOF
- cat > sbatch_throttle.sh <<'EOS'
-    #!/usr/bin/env bash
-    set -euo pipefail
-    PER_HOUR=50
-    MIN_GAP=\$(( 3600 / PER_HOUR ))
-    STATE_DIR="\${HOME}/.sbatch_rate"
-    LOCK_FILE="\${STATE_DIR}/lock"
-    TS_FILE="\${STATE_DIR}/last_submit.ts"
-    mkdir -p "\${STATE_DIR}"
-    exec 200>"\${LOCK_FILE}"
-    flock 200
-    now=\$(date +%s); last=0
-    [[ -f "\${TS_FILE}" ]] && read -r last < "\${TS_FILE}" || true
-    delta=\$(( now - last ))
-    if (( delta < MIN_GAP )); then
-      sleep \$(( MIN_GAP - delta ))
-    fi
-    date +%s > "\${TS_FILE}"
-    unset SLURM_CONF || true
-    exec sbatch "\$@"
-EOS
-    chmod +x sbatch_throttle.sh
+  echo "[INFO] Cromwell backend: Local (no nested sbatch)"
+  echo "[INFO] Outer Nextflow allocation: CPUs=${task.cpus}, memory=${task.memory}"
 
-  export PATH="\$PWD:\$PATH"
-
-  java -Dconfig.file=${cromwell_config} -jar ${params.cromwell_jar} run ${params.wdl_script} --inputs ${wdl_inputs_json} --options cromwell_options.json
+  java -Xmx4G -Dconfig.file=${cromwell_config} -jar ${params.cromwell_jar} run ${params.wdl_script} --inputs ${wdl_inputs_json} --options cromwell_options.json
 
   # Flatten important outputs from deep cromwell dirs into TARGET_DIR
   shopt -s nullglob
