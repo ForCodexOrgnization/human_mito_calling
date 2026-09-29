@@ -18,13 +18,13 @@ SCRIPT_BASE_DIR="/home/lt692/ycga_work/human_standard/human_mito_calling"
 MAIN_NF_SCRIPT="$SCRIPT_BASE_DIR/main.nf"                                      
 NEXTFLOW_CONFIG="$SCRIPT_BASE_DIR/nextflow_Mccleary.config"                     
 
-MASTER_SAMPLE_LIST="/home/lt692/ycga_work/human_standard/test_data/test_sample_cram.tsv"  
-OUTPUT_DIR="/home/lt692/ycga_work/human_standard/test_data/test_cram_results"             
-WORK_DIR_BASE="/home/lt692/ycga_work/human_standard/test_data/nextflow_work_cram"                   
+MASTER_SAMPLE_LIST="/home/lt692/ycga_work/human_standard/human_mito_calling/RPL_sample_list_26_27_28_path.txt"  
+OUTPUT_DIR="/home/lt692/ycga_work/human_standard/RPL_results"             
+WORK_DIR_BASE="/vast/palmer/scratch/lake_nicole/lt692/nextflow_work_RPL"                                     
 
 # 2) Parallelism and Batch Control
 BATCH_SIZE=10            # Number of samples processed within a single Slurm job
-CONCURRENT_BATCHES=5     # Maximum number of Batch Jobs allowed to run at once (Slurm throttling)
+CONCURRENT_BATCHES=2     # Maximum number of Batch Jobs allowed to run at once (Slurm throttling)
 CLEANUP_ON_SUCCESS=true  # Delete intermediate files after successful completion
 
 # 3) Pipeline Mode Configuration
